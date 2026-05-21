@@ -2204,14 +2204,14 @@ function ProfileModal({ profileHook, onClose }) {
                 </div>
               ) : (
                 <>
-                  <button onClick={()=>{ setActiveId(p.id); onClose() }} className="flex-1 flex items-center gap-3 text-left">
+                  <button onClick={()=>{ setActiveId(p.id); setTimeout(onClose, 50) }} className="flex-1 flex items-center gap-3 text-left">
                     <span className="text-2xl">{p.emoji}</span>
                     <div>
                       <p className="text-sm font-semibold text-zinc-200">{p.name}</p>
                       <p className="text-xs text-zinc-600">{p.type==="personal"?"👤 Pessoal":"🏢 Empresa"} · {activeId===p.id?"✓ Ativo":"Clique para ativar"}</p>
                     </div>
                   </button>
-                  <button onClick={()=>{setEditId(p.id);setEditName(p.name);setEditEmoji(p.emoji)}} className="p-1.5 text-zinc-600 hover:text-zinc-300 transition-colors"><Eye size={13}/></button>
+                  <button onClick={()=>{setEditId(p.id);setEditName(p.name);setEditEmoji(p.emoji)}} className="p-1.5 text-zinc-600 hover:text-zinc-300 transition-colors">✏️</button>
                   {p.id!=="default"&&<button onClick={()=>{ if(p.id !== 'default') deleteProfile(p.id) }} className="p-1.5 text-zinc-700 hover:text-rose-400 transition-colors"><Trash2 size={13}/></button>}
                 </>
               )}
@@ -2406,6 +2406,10 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             {fin.pending.length>0&&<button onClick={()=>setPage("fluxo")} className="relative p-2 rounded-lg text-zinc-400 hover:bg-zinc-800 transition-colors"><Bell size={15}/><span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-rose-500"/></button>}
+            <button onClick={()=>setShowProfiles(true)} className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 border text-xs bg-zinc-800/50 border-zinc-700/40 text-zinc-300 hover:bg-zinc-800 transition-colors" title="Trocar perfil">
+              <span className="text-base leading-none">{activeProfile.emoji}</span>
+              <span className="hidden sm:block max-w-[90px] truncate">{activeProfile.name}</span>
+            </button>
             <button onClick={()=>setShowSettings(true)} className="p-2 rounded-lg text-zinc-400 hover:bg-zinc-800 transition-colors" title="Configurações IA"><SettingsIcon size={15}/></button>
             <button onClick={()=>setMobileMenu(true)} className="md:hidden p-2 rounded-lg text-zinc-400 hover:bg-zinc-800 transition-colors">
               <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
