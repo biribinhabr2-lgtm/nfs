@@ -2142,7 +2142,9 @@ const DEFAULT_PROFILE = { id:"default", name:"Empresa Principal", emoji:"🏢", 
 function useProfiles() {
   const [profiles, setProfiles] = useLocalStorage("erp_profiles", [DEFAULT_PROFILE])
   const [activeId, setActiveId] = useLocalStorage("erp_active_profile", "default")
-  const active = profiles.find(p => p.id === activeId) || profiles[0] || DEFAULT_PROFILE
+  // Migrate old profiles without type field
+  const migratedProfiles = profiles.map(p => p.type ? p : {...p, type:"business"})
+  const active = migratedProfiles.find(p => p.id === activeId) || migratedProfiles[0] || DEFAULT_PROFILE
 
   const createProfile = (name, emoji="🏢", type="business") => {
     const id = "p_" + Date.now()
@@ -2164,7 +2166,7 @@ function useProfiles() {
     setProfiles(prev => prev.map(p => p.id === id ? {...p, name, emoji} : p))
   }
 
-  return { profiles, active, activeId, setActiveId, createProfile, deleteProfile, renameProfile }
+  return { profiles:migratedProfiles, active, activeId, setActiveId, createProfile, deleteProfile, renameProfile }
 }
 
 function ProfileModal({ profileHook, onClose }) {
@@ -2300,8 +2302,8 @@ export default function App() {
   const go  = useCallback(id => { setPage(id); setMobileMenu(false) }, [])
 
   // ── Route to personal app if profile type is personal ───────────────────
-  if(activeProfile.type === "personal") {
-    return <PersonalApp profileId={profileId} profileHook={profileHook} dark={dark} setDark={setDark}/>
+  if(activeProfile?.type === "personal") {
+    return <PersonalApp key={profileId} profileId={profileId} profileHook={profileHook} dark={dark} setDark={setDark}/>
   }
 
   const PAGES = useMemo(() => ({
@@ -2316,7 +2318,7 @@ export default function App() {
   }), [fin, txs, svcs, setTxs, setSvcs, apiKey])
 
   return (
-    <div className={`flex ${dark?"bg-zinc-950 text-zinc-100":"bg-slate-50 text-zinc-900"}`} style={{height:"100dvh",overflow:"hidden"}}>
+    <div key={profileId} className={`flex ${dark?"bg-zinc-950 text-zinc-100":"bg-slate-50 text-zinc-900"}`} style={{height:"100dvh",overflow:"hidden"}}>
 
       {/* ── Sidebar desktop ─────────────────────────────────────────────── */}
       <aside className={`hidden md:flex flex-col flex-shrink-0 transition-all duration-300 border-r ${dark?"bg-zinc-900 border-zinc-800":"bg-white border-zinc-200"} ${collapsed?"w-[60px]":"w-[220px]"}`}>
