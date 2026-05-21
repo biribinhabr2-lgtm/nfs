@@ -1706,24 +1706,21 @@ function PersonalDashboard({ txs, cats }) {
 // ── Personal Transactions ─────────────────────────────────────────────────
 function PersonalTxs({ txs, setTxs, cats }) {
   const blank = { name:"", category:"", type:"saida", value:"", date:new Date().toISOString().slice(0,10), payment:"PIX", obs:"", recurrence:"none", status:"pago" }
-  const [form, setForm]   = useState(blank)
-  const [edit, setEdit]   = useState(null)
-  const [show, setShow]   = useState(false)
-  const [filt, setFilt]   = useState("todos")
-  const [q,    setQ]      = useState("")
-  const [month,setMonth]  = useState(new Date().toISOString().slice(0,7))
+  const [form,    setForm]   = useState(blank)
+  const [edit,    setEdit]   = useState(null)
+  const [show,    setShow]   = useState(false)
+  const [filt,    setFilt]   = useState("todos")
+  const [q,       setQ]      = useState("")
+  const [month,   setMonth]  = useState(new Date().toISOString().slice(0,7))
 
-  const filtered = useMemo(() => {
-    return txs.filter(t => {
-      const m = t.competencia||t.date?.slice(0,7)||""
-      if(month && m !== month) return false
-      if(filt==="entrada" && t.type!=="entrada") return false
-      if(filt==="saida"   && t.type!=="saida")   return false
-      if(filt==="pendente"&& t.status!=="pendente") return false
-      if(q && !t.name.toLowerCase().includes(q.toLowerCase()) && !t.category.toLowerCase().includes(q.toLowerCase())) return false
-      return true
-    }).sort((a,b)=>b.date.localeCompare(a.date))
-  }, [txs, filt, q, month])
+  const filtered = useMemo(() => txs.filter(t => {
+    if(month && (t.competencia||t.date?.slice(0,7)) !== month) return false
+    if(filt==="entrada" && t.type!=="entrada") return false
+    if(filt==="saida"   && t.type!=="saida")   return false
+    if(filt==="pendente"&& t.status!=="pendente") return false
+    if(q && !t.name.toLowerCase().includes(q.toLowerCase()) && !t.category.toLowerCase().includes(q.toLowerCase())) return false
+    return true
+  }).sort((a,b)=>b.date.localeCompare(a.date)), [txs,filt,q,month])
 
   const save = () => {
     if(!form.name||!form.value||!form.date) return
@@ -1737,63 +1734,11 @@ function PersonalTxs({ txs, setTxs, cats }) {
   }
   const del = id => { setTxs(p=>p.filter(t=>t.id!==id)); setEdit(null) }
 
-  const activeData = edit || form
+  const activeData    = edit || form
   const setActiveData = edit ? setEdit : setForm
-  const typeCats = cats.filter(c=>c.type===(activeData.type||"saida"))
-
-
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-zinc-100">Categorias</h1>
-        <button onClick={()=>{setEdit(null);setForm(blank);setShow(s=>!s)}} className="flex items-center gap-1.5 bg-violet-500 hover:bg-violet-400 text-white font-semibold text-sm rounded-xl px-4 py-2 transition-colors"><Plus size={14}/>Nova</button>
-      </div>
-      {(show||edit)&&(
-        <div className="bg-zinc-900/80 border border-zinc-700/60 rounded-xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-zinc-300">{edit?"Editar":"Novo Lançamento"}</p>
-        <button onClick={()=>{setShow(false);setEdit(null)}} className="text-zinc-600 hover:text-zinc-300"><X size={15}/></button>
-      </div>
-      {/* Type toggle */}
-      <div className="flex gap-2">
-        {["saida","entrada"].map(tp => (
-          <button key={tp} onClick={()=>setActiveData(p=>({...p,type:tp,category:""}))}
-            className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${activeData.type===tp?(tp==="saida"?"bg-rose-500/20 text-rose-400 border border-rose-500/30":"bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"):"bg-zinc-800 text-zinc-500"}`}>
-            {tp==="saida"?"💸 Gasto":"💰 Receita"}
-          </button>
-        ))}
-      </div>
-      {/* Category grid */}
-      <div>
-        <p className="text-[11px] text-zinc-500 mb-2">Categoria</p>
-        <div className="grid grid-cols-4 sm:grid-cols-5 gap-1.5">
-          {typeCats.map(c => (
-            <button key={c.id} onClick={()=>setActiveData(p=>({...p,category:c.name}))}
-              className={`flex flex-col items-center gap-1 p-2 rounded-xl text-center transition-colors ${activeData.category===c.name?"ring-2 ring-offset-1 ring-offset-zinc-900":"hover:bg-zinc-800"}`}
-              style={activeData.category===c.name?{background:c.color+"20",ringColor:c.color}:{}}>
-              <span className="text-xl">{c.icon}</span>
-              <span className="text-[10px] text-zinc-400 leading-tight">{c.name}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2"><label className="text-[11px] text-zinc-500 block mb-1">Descrição *</label><input className={INP} value={activeData.name||""} onChange={e=>setActiveData(p=>({...p,name:e.target.value}))} placeholder="Ex: Supermercado"/></div>
-        <div><label className="text-[11px] text-zinc-500 block mb-1">Valor (R$) *</label><input type="number" className={`${INP} font-mono`} value={activeData.value||""} onChange={e=>setActiveData(p=>({...p,value:e.target.value}))} placeholder="0,00"/></div>
-        <div><label className="text-[11px] text-zinc-500 block mb-1">Data *</label><input type="date" className={INP} value={activeData.date||""} onChange={e=>setActiveData(p=>({...p,date:e.target.value}))}/></div>
-        <div><label className="text-[11px] text-zinc-500 block mb-1">Pagamento</label><select className={INP} value={activeData.payment||"PIX"} onChange={e=>setActiveData(p=>({...p,payment:e.target.value}))}>{PAYMENTS.map(m=><option key={m}>{m}</option>)}</select></div>
-        <div><label className="text-[11px] text-zinc-500 block mb-1">Status</label><select className={INP} value={activeData.status||"pago"} onChange={e=>setActiveData(p=>({...p,status:e.target.value}))}><option value="pago">Pago</option><option value="pendente">Pendente</option></select></div>
-      </div>
-      <div className="flex items-center gap-2 pt-1">
-        <button onClick={edit?saveEdit:save} className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-xl py-2.5 transition-colors">Salvar</button>
-        {edit&&<button onClick={()=>del(edit.id)} className="flex items-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-sm rounded-xl px-4 py-2.5 transition-colors"><Trash2 size={13}/>Excluir</button>}
-      </div>
-    </div>
-  )
-
-  const totInc = filtered.filter(t=>t.type==="entrada").reduce((a,t)=>a+t.value,0)
-  const totExp = filtered.filter(t=>t.type==="saida"&&t.status==="pago").reduce((a,t)=>a+t.value,0)
+  const typeCats      = cats.filter(c=>c.type===(activeData.type||"saida"))
+  const totInc        = filtered.filter(t=>t.type==="entrada").reduce((a,t)=>a+t.value,0)
+  const totExp        = filtered.filter(t=>t.type==="saida"&&t.status==="pago").reduce((a,t)=>a+t.value,0)
 
   return (
     <div className="space-y-4">
@@ -1803,48 +1748,51 @@ function PersonalTxs({ txs, setTxs, cats }) {
       </div>
 
       {(show||edit)&&(
-    <div className="bg-zinc-900/80 border border-zinc-700/60 rounded-xl p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold text-zinc-300">{edit?"Editar Categoria":"Nova Categoria"}</p>
-        <button onClick={()=>{setShow(false);setEdit(null);setForm(blank)}} className="text-zinc-600 hover:text-zinc-300"><X size={15}/></button>
-      </div>
-      <div className="flex gap-2">
-        {["saida","entrada"].map(tp=>(
-          <button key={tp} onClick={()=>setForm(p=>({...p,type:tp}))} className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${form.type===tp?(tp==="saida"?"bg-rose-500/20 text-rose-400 border border-rose-500/30":"bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"):"bg-zinc-800 text-zinc-500"}`}>
-            {tp==="saida"?"Gasto":"Receita"}
-          </button>
-        ))}
-      </div>
-      <div><label className="text-[11px] text-zinc-500 block mb-1">Nome</label><input className={INP} value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} placeholder="Ex: Supermercado"/></div>
-      <div>
-        <label className="text-[11px] text-zinc-500 block mb-2">Ícone</label>
-        <div className="flex flex-wrap gap-1.5">
-          {ICON_OPTS.map(ic=>(
-            <button key={ic} onClick={()=>setForm(p=>({...p,icon:ic}))} className={`w-9 h-9 rounded-lg text-xl flex items-center justify-center transition-colors ${form.icon===ic?"bg-zinc-600 ring-2 ring-emerald-500":"bg-zinc-800 hover:bg-zinc-700"}`}>{ic}</button>
-          ))}
+        <div className="bg-zinc-900/80 border border-zinc-700/60 rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-zinc-300">{edit?"Editar":"Novo Lançamento"}</p>
+            <button onClick={()=>{setShow(false);setEdit(null)}} className="text-zinc-600 hover:text-zinc-300"><X size={15}/></button>
+          </div>
+          <div className="flex gap-2">
+            {["saida","entrada"].map(tp=>(
+              <button key={tp} onClick={()=>setActiveData(p=>({...p,type:tp,category:""}))}
+                className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${activeData.type===tp?(tp==="saida"?"bg-rose-500/20 text-rose-400 border border-rose-500/30":"bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"):"bg-zinc-800 text-zinc-500"}`}>
+                {tp==="saida"?"💸 Gasto":"💰 Receita"}
+              </button>
+            ))}
+          </div>
+          <div>
+            <p className="text-[11px] text-zinc-500 mb-2">Categoria</p>
+            <div className="grid grid-cols-4 sm:grid-cols-5 gap-1.5">
+              {typeCats.map(c=>(
+                <button key={c.id} onClick={()=>setActiveData(p=>({...p,category:c.name}))}
+                  className={`flex flex-col items-center gap-1 p-2 rounded-xl text-center transition-colors ${activeData.category===c.name?"ring-2 ring-emerald-500":"hover:bg-zinc-800"}`}
+                  style={activeData.category===c.name?{background:c.color+"20"}:{}}>
+                  <span className="text-xl">{c.icon}</span>
+                  <span className="text-[10px] text-zinc-400 leading-tight">{c.name}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="col-span-2"><label className="text-[11px] text-zinc-500 block mb-1">Descrição *</label><input className={INP} value={activeData.name||""} onChange={e=>setActiveData(p=>({...p,name:e.target.value}))} placeholder="Ex: Supermercado"/></div>
+            <div><label className="text-[11px] text-zinc-500 block mb-1">Valor (R$) *</label><input type="number" className={`${INP} font-mono`} value={activeData.value||""} onChange={e=>setActiveData(p=>({...p,value:e.target.value}))} placeholder="0,00"/></div>
+            <div><label className="text-[11px] text-zinc-500 block mb-1">Data *</label><input type="date" className={INP} value={activeData.date||""} onChange={e=>setActiveData(p=>({...p,date:e.target.value}))}/></div>
+            <div><label className="text-[11px] text-zinc-500 block mb-1">Pagamento</label><select className={INP} value={activeData.payment||"PIX"} onChange={e=>setActiveData(p=>({...p,payment:e.target.value}))}>{PAYMENTS.map(m=><option key={m}>{m}</option>)}</select></div>
+            <div><label className="text-[11px] text-zinc-500 block mb-1">Status</label><select className={INP} value={activeData.status||"pago"} onChange={e=>setActiveData(p=>({...p,status:e.target.value}))}><option value="pago">Pago</option><option value="pendente">Pendente</option></select></div>
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <button onClick={edit?saveEdit:save} className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-xl py-2.5 transition-colors">Salvar</button>
+            {edit&&<button onClick={()=>del(edit.id)} className="flex items-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-sm rounded-xl px-4 py-2.5 transition-colors"><Trash2 size={13}/>Excluir</button>}
+          </div>
         </div>
-      </div>
-      <div>
-        <label className="text-[11px] text-zinc-500 block mb-2">Cor</label>
-        <div className="flex flex-wrap gap-1.5">
-          {COLOR_OPTS.map(col=>(
-            <button key={col} onClick={()=>setForm(p=>({...p,color:col}))} className={`w-7 h-7 rounded-lg transition-transform ${form.color===col?"scale-125 ring-2 ring-white/50":""}`} style={{background:col}}/>
-          ))}
-        </div>
-      </div>
-      <div className="flex gap-2">
-        <button onClick={save} className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-xl py-2.5 transition-colors">Salvar</button>
-        {edit&&<button onClick={()=>del(edit.id)} className="flex items-center gap-1.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 text-sm rounded-xl px-4 py-2.5"><Trash2 size={13}/>Excluir</button>}
-      </div>
-    </div>
-  )
       )}
 
       <div className="flex items-center gap-2 flex-wrap">
         <input type="month" className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-zinc-300 outline-none" value={month} onChange={e=>setMonth(e.target.value)}/>
         <div className="flex items-center gap-1 bg-zinc-800/80 border border-zinc-700/40 rounded-lg p-1">
           {["todos","entrada","saida","pendente"].map(f=>(
-            <button key={f} onClick={()=>setFilt(f)} className={`text-xs px-2.5 py-1.5 rounded-md font-medium transition-colors whitespace-nowrap ${filt===f?"bg-zinc-700 text-zinc-100":"text-zinc-500"}`}>
+            <button key={f} onClick={()=>setFilt(f)} className={`text-xs px-2.5 py-1.5 rounded-md font-medium whitespace-nowrap transition-colors ${filt===f?"bg-zinc-700 text-zinc-100":"text-zinc-500"}`}>
               {f==="entrada"?"Receitas":f==="saida"?"Gastos":f==="pendente"?"Pend.":"Todos"}
             </button>
           ))}
@@ -1864,14 +1812,12 @@ function PersonalTxs({ txs, setTxs, cats }) {
 
       <div className="rounded-xl border border-zinc-800 overflow-hidden">
         <div className="divide-y divide-zinc-800/40 max-h-[500px] overflow-y-auto">
-          {!filtered.length && <p className="text-center text-zinc-600 text-sm py-10">Nenhum lançamento.</p>}
-          {filtered.map(t => {
-            const cat = cats.find(c=>c.name===t.category&&c.type===t.type)
-            return (
+          {!filtered.length&&<p className="text-center text-zinc-600 text-sm py-10">Nenhum lançamento.</p>}
+          {filtered.map(t=>{
+            const cat=cats.find(c=>c.name===t.category&&c.type===t.type)
+            return(
               <div key={t.id} onClick={()=>{setEdit({...t});setShow(false)}} className={`flex items-center gap-3 px-4 py-3 hover:bg-zinc-800/20 cursor-pointer transition-colors ${edit?.id===t.id?"bg-sky-500/5":""}`}>
-                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-lg" style={{background:(cat?.color||"#71717a")+"20"}}>
-                  {cat?.icon||(t.type==="entrada"?"💰":"💸")}
-                </div>
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-lg" style={{background:(cat?.color||"#71717a")+"20"}}>{cat?.icon||(t.type==="entrada"?"💰":"💸")}</div>
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-zinc-200 truncate">{t.name}</p>
                   <p className="text-xs text-zinc-600">{t.category} · {t.date?.slice(0,10)}</p>
@@ -1889,7 +1835,86 @@ function PersonalTxs({ txs, setTxs, cats }) {
   )
 }
 
-// ── Personal Charts ───────────────────────────────────────────────────────
+// ── Personal Categories Manager ───────────────────────────────────────────
+function PersonalCategories({ cats, setCats }) {
+  const blank = { name:"", icon:"📦", color:"#6366f1", type:"saida" }
+  const [form, setForm] = useState(blank)
+  const [edit, setEdit] = useState(null)
+  const [show, setShow] = useState(false)
+
+  const COLOR_OPTS = ["#6366f1","#ef4444","#f59e0b","#10b981","#14b8a6","#8b5cf6","#ec4899","#f97316","#0ea5e9","#84cc16","#71717a"]
+  const ICON_OPTS  = ["🏠","🍽️","🚗","💊","📚","🎮","👕","📱","✈️","🐾","🎬","💄","🏋️","🎯","🛒","🎁","📦","💰","💻","🔧","🏪","💼","🌟","➕","💸"]
+
+  const save = () => {
+    if(!form.name.trim()) return
+    if(edit){ setCats(p=>p.map(c=>c.id===edit.id?{...form,id:edit.id}:c)); setEdit(null) }
+    else    { setCats(p=>[...p,{...form,id:"pc_"+uid()}]); setForm(blank); setShow(false) }
+  }
+  const del = id => { setCats(p=>p.filter(c=>c.id!==id)); setEdit(null) }
+  const openEdit = c => { setEdit(c); setForm({...c}); setShow(false) }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold text-zinc-100">Categorias</h1>
+        <button onClick={()=>{setEdit(null);setForm(blank);setShow(s=>!s)}} className="flex items-center gap-1.5 bg-violet-500 hover:bg-violet-400 text-white font-semibold text-sm rounded-xl px-4 py-2 transition-colors"><Plus size={14}/>Nova</button>
+      </div>
+
+      {(show||edit)&&(
+        <div className="bg-zinc-900/80 border border-zinc-700/60 rounded-xl p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-semibold text-zinc-300">{edit?"Editar Categoria":"Nova Categoria"}</p>
+            <button onClick={()=>{setShow(false);setEdit(null);setForm(blank)}} className="text-zinc-600 hover:text-zinc-300"><X size={15}/></button>
+          </div>
+          <div className="flex gap-2">
+            {["saida","entrada"].map(tp=>(
+              <button key={tp} onClick={()=>setForm(p=>({...p,type:tp}))} className={`flex-1 py-2 rounded-xl text-sm font-semibold transition-colors ${form.type===tp?(tp==="saida"?"bg-rose-500/20 text-rose-400 border border-rose-500/30":"bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"):"bg-zinc-800 text-zinc-500"}`}>
+                {tp==="saida"?"Gasto":"Receita"}
+              </button>
+            ))}
+          </div>
+          <div><label className="text-[11px] text-zinc-500 block mb-1">Nome</label><input className={INP} value={form.name} onChange={e=>setForm(p=>({...p,name:e.target.value}))} placeholder="Ex: Supermercado"/></div>
+          <div>
+            <label className="text-[11px] text-zinc-500 block mb-2">Ícone</label>
+            <div className="flex flex-wrap gap-1.5">
+              {ICON_OPTS.map(ic=>(
+                <button key={ic} onClick={()=>setForm(p=>({...p,icon:ic}))} className={`w-9 h-9 rounded-lg text-xl flex items-center justify-center transition-colors ${form.icon===ic?"bg-zinc-600 ring-2 ring-emerald-500":"bg-zinc-800 hover:bg-zinc-700"}`}>{ic}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="text-[11px] text-zinc-500 block mb-2">Cor</label>
+            <div className="flex flex-wrap gap-1.5">
+              {COLOR_OPTS.map(col=>(
+                <button key={col} onClick={()=>setForm(p=>({...p,color:col}))} className={`w-7 h-7 rounded-lg transition-transform ${form.color===col?"scale-125 ring-2 ring-white/50":""}`} style={{background:col}}/>
+              ))}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={save} className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-xl py-2.5 transition-colors">Salvar</button>
+            {edit&&<button onClick={()=>del(edit.id)} className="flex items-center gap-1.5 bg-rose-500/10 text-rose-400 border border-rose-500/20 text-sm rounded-xl px-4 py-2.5"><Trash2 size={13}/>Excluir</button>}
+          </div>
+        </div>
+      )}
+
+      {["saida","entrada"].map(type=>(
+        <div key={type} className="bg-zinc-900/60 border border-zinc-800 rounded-xl overflow-hidden">
+          <p className="text-sm font-semibold text-zinc-400 px-4 py-3 border-b border-zinc-800">{type==="saida"?"💸 Gastos":"💰 Receitas"}</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-0 divide-x divide-y divide-zinc-800/40">
+            {cats.filter(c=>c.type===type).map(c=>(
+              <button key={c.id} onClick={()=>openEdit(c)} className={`flex items-center gap-3 px-4 py-3 hover:bg-zinc-800/40 text-left transition-colors ${edit?.id===c.id?"bg-zinc-800/60":""}`}>
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center text-xl flex-shrink-0" style={{background:c.color+"20"}}>{c.icon}</div>
+                <span className="text-sm text-zinc-300 truncate">{c.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+
 function PersonalCharts({ txs, cats }) {
   const [period, setPeriod] = useState("mes")
 
