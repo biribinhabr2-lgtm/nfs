@@ -870,7 +870,7 @@ async function callGroq(messages, apiKey) {
   const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: GROQ_MODEL, messages, max_tokens: 1000, temperature: 0.4 })
+    body: JSON.stringify({ model: GROQ_MODEL, messages, max_tokens: 4096, temperature: 0.2 })
   })
   const data = await res.json()
   if (!res.ok || data.error) throw new Error(data.error?.message || `Erro ${res.status}`)
@@ -950,37 +950,37 @@ function SettingsModal({ apiKey, setApiKey, onClose }) {
 }
 
 // ─── IMPORTAÇÃO IA ────────────────────────────────────────────────────────────
-const EXTRACTION_PROMPT = `Você é especialista em contabilidade brasileira. Analise o documento financeiro abaixo e extraia TODAS as movimentações.
+const EXTRACTION_PROMPT = `Você é especialista em contabilidade brasileira. Extraia TODAS as movimentações financeiras do texto abaixo.
 
-IMPORTANTE: O documento pode ter QUALQUER estrutura:
-- Extrato bancário (linhas com data, descrição, valor)
-- Relatório semanal (matriz dias × semanas com receitas)
-- DRE ou balanço (grupos de receitas e despesas)
-- Planilha de fluxo de caixa (entradas/saídas por período)
-- Nota fiscal ou recibo (um valor com descrição)
-- Lista de pagamentos (múltiplos valores)
-Adapte sua leitura à estrutura encontrada.
+O texto pode ser um extrato bancário, fatura, lista de pagamentos, recibo, nota fiscal ou qualquer documento financeiro.
+
+REGRAS CRÍTICAS:
+1. Extraia CADA linha/item que tenha data + valor. Não pule nenhum.
+2. Valores com "+" ou "Crédito" ou "PIX recebido" ou "TED recebida" → type: "entrada"
+3. Valores com "-" ou "Débito" ou "Pagamento" ou "TED enviada" → type: "saida"
+4. Se não houver sinal explícito: pagamentos de contas são "saida", recebimentos são "entrada"
+5. value deve ser número positivo (sem sinal): ex: 1800.50
+6. date no formato YYYY-MM-DD. Se só tiver dia/mês, use 2025 como ano.
+7. Se a data estiver apenas no cabeçalho do extrato, use-a para todos os itens sem data própria.
 
 Categorias ENTRADA: Serviços, Eventos, Vendas de Produtos, Reembolsos, Receitas Extras, Outros
 Categorias SAÍDA: Aluguel, Energia/Água, Folha de Pagamento, Freelancers, Impostos, Marketing, Manutenção, Materiais, Plataformas/Software, Equipamentos, Despesas Operacionais, Outros
 
-Regras de categorização:
-- Meta/Facebook/Google/Instagram Ads → Marketing
-- Aluguel/Locação/Alug → Aluguel
-- Salário/Folha/CLT/Funcionário/Colaborador → Folha de Pagamento
-- Energia/Luz/Água/CEMIG/COPEL/SABESP → Energia/Água
-- DARF/DAS/Simples/Imposto/INSS/FGTS → Impostos
-- Freelancer/Prestador/Autônomo → Freelancers
-- PIX recebido/Depósito/Crédito/TED recebida → Receitas Extras (entrada)
-- Débito/Pagamento enviado/TED enviada → saida
-- Receita/Venda/Faturamento → Serviços ou Eventos (entrada)
+Mapeamento de categorias:
+- PIX recebido/Depósito/TED recebida/Crédito → Receitas Extras (entrada)
+- Aluguel/Locação → Aluguel (saida)
+- Salário/Folha/Funcionário → Folha de Pagamento (saida)
+- Energia/Luz/Água/CEMIG/COPEL/SABESP → Energia/Água (saida)
+- DARF/DAS/Simples/Imposto/INSS/FGTS → Impostos (saida)
+- Meta/Facebook/Google Ads → Marketing (saida)
+- Software/Plataforma/Assinatura → Plataformas/Software (saida)
 
-Para datas ausentes: use o contexto do documento (cabeçalho, período mencionado).
-Use o ano atual (2025) se não especificado.
+RETORNE SOMENTE O JSON ARRAY, sem texto antes ou depois, sem markdown:
+[{"name":"descrição","date":"2025-05-10","value":1800.00,"type":"entrada","category":"Receitas Extras","payment":"PIX","obs":""}]
 
-RETORNE APENAS UM JSON ARRAY VÁLIDO, sem markdown, sem backticks, sem texto extra:
-[{"name":"descrição clara","date":"YYYY-MM-DD","value":123.45,"type":"entrada","category":"Serviços","payment":"PIX","obs":"contexto útil"}]
-Se não encontrar nenhuma movimentação financeira: []`
+Se o texto não contiver movimentações financeiras, retorne somente: []
+
+DOCUMENTO:`
 
 function ImportacaoIA({txs,setTxs,apiKey}) {
   const [tab,setTab] = useState("arquivo")
@@ -1000,8 +1000,22 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
     try {
       const raw = await callGemini(blocks, apiKey)
       let parsed=[]
-      try{const clean=raw.replace(/```json|```/g,"").trim();const m=clean.match(/\[[\s\S]*\]/);if(m)parsed=JSON.parse(m[0]);else if(clean.startsWith("["))parsed=JSON.parse(clean)}catch(e){console.error(e)}
-      if(!parsed.length){setAnalysis("Nenhuma movimentação encontrada. Tente colar o texto do extrato.");setItems([]);setStage("preview");return}
+      let parseErr=""
+      try{
+        const clean=raw.replace(/```json|```/g,"").trim()
+        const m=clean.match(/\[[\s\S]*\]/)
+        if(m) parsed=JSON.parse(m[0])
+        else if(clean.startsWith("[")) parsed=JSON.parse(clean)
+        else if(clean==="[]"||clean==="[ ]") parsed=[]
+      }catch(e){
+        console.error("Parse JSON falhou:", e, "\nResposta raw:", raw)
+        parseErr=`IA retornou formato inválido. Tente novamente ou simplify o texto.`
+      }
+      if(parseErr){setAnalysis(parseErr);setStage("error");return}
+      if(!parsed.length){
+        setAnalysis("Nenhuma movimentação encontrada. Verifique se o texto contém datas e valores financeiros.")
+        setItems([]);setStage("preview");return
+      }
       const withMeta = parsed.map((t,i)=>({
         ...t,id:`i_${Date.now()}_${i}`,
         value:typeof t.value==="string"?parseFloat(String(t.value).replace(/\./g,"").replace(",","."))||0:Number(t.value)||0,
@@ -1037,7 +1051,7 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
         try {
           const txt = await toTxt(file)
           if (txt && txt.trim().length > 50) {
-            await process([{text:EXTRACTION_PROMPT+"\n\n"+txt.slice(0,7000)}],file.name)
+            await process([{text:EXTRACTION_PROMPT+"\n\n"+txt.slice(0,12000)}],file.name)
           } else {
             setErrorMsg("PDF sem texto legível. Abra o PDF, selecione todo o texto (Ctrl+A), copie e use a aba 'Colar Texto'.")
             setStage("error")
@@ -1286,10 +1300,10 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
           .filter(n=>sheetType(n)!=="skip")
           .map(n=>`[Planilha: ${n}]\n${XLSX.utils.sheet_to_csv(wb.Sheets[n]).slice(0,2000)}`)
           .join("\n\n")
-        await process([{text:EXTRACTION_PROMPT+"\n\n"+allCsv.slice(0,7000)}],file.name)
+        await process([{text:EXTRACTION_PROMPT+"\n\n"+allCsv.slice(0,12000)}],file.name)
       }else{
         const txt=await toTxt(file)
-        await process([{text:EXTRACTION_PROMPT+"\n\n"+txt.slice(0,7000)}],file.name)
+        await process([{text:EXTRACTION_PROMPT+"\n\n"+txt.slice(0,12000)}],file.name)
       }
     }catch(e){setAnalysis(e.message);setStage("error")}
   }
@@ -1332,7 +1346,7 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
               <p className="text-sm font-semibold text-zinc-300 mb-1">Cole o conteúdo do extrato</p>
               <p className="text-xs text-zinc-500 mb-3">Funciona com extrato bancário copiado, CSV em texto, lista de pagamentos com datas e valores.</p>
               <textarea className={`${INP} resize-none font-mono text-xs`} rows={10} placeholder={"01/05/2025  PIX RECEBIDO FESTA INFANTIL  +1800,00\n05/05/2025  PAGAMENTO ALUGUEL  -2200,00\n10/05/2025  ENERGIA ELETRICA  -480,00"} value={pasted} onChange={e=>setPasted(e.target.value)}/>
-              <button onClick={()=>process([{text:EXTRACTION_PROMPT+"\n\n"+pasted.slice(0,7000)}],"Texto colado")} disabled={!pasted.trim()} className="mt-3 w-full flex items-center justify-center gap-2 bg-violet-500 hover:bg-violet-400 disabled:opacity-40 text-white font-semibold text-sm rounded-xl py-3 transition-colors"><Brain size={15}/>Analisar com IA</button>
+              <button onClick={()=>process([{text:EXTRACTION_PROMPT+"\n\n"+pasted.slice(0,12000)}],"Texto colado")} disabled={!pasted.trim()} className="mt-3 w-full flex items-center justify-center gap-2 bg-violet-500 hover:bg-violet-400 disabled:opacity-40 text-white font-semibold text-sm rounded-xl py-3 transition-colors"><Brain size={15}/>Analisar com IA</button>
             </Card>
           )}
           {history.length>0&&(
