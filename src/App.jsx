@@ -988,7 +988,7 @@ REGRAS CRÍTICAS:
 3. Valores com "-" ou "Débito" ou "Pagamento" ou "TED enviada" → type: "saida"
 4. Se não houver sinal explícito: pagamentos de contas são "saida", recebimentos são "entrada"
 5. value deve ser número positivo (sem sinal): ex: 1800.50
-6. date no formato YYYY-MM-DD. Se só tiver dia/mês, use 2025 como ano.
+6. date no formato YYYY-MM-DD. Se só tiver dia/mês, use o ano do cabeçalho do extrato; se não houver, use 2025.
 7. Se a data estiver apenas no cabeçalho do extrato, use-a para todos os itens sem data própria.
 
 IGNORAR COMPLETAMENTE (NÃO incluir no JSON) — são movimentações internas entre contas próprias, não são receita nem despesa real:
@@ -1034,29 +1034,24 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
 
   const callClaude = (parts) => callGemini(parts, apiKey)
 
-  // Pré-processa o texto: normaliza espaços e remove linhas claramente não-financeiras
   const preprocessText = text => text
     .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 
-  // Divide por quebra de linha respeitando um overlap para não perder transações na fronteira
-  const splitChunks = (text, maxSize, overlap=400) => {
-    if(text.length <= maxSize) return [text]
+  // Divide por linhas: cada transação do extrato ocupa 1-3 linhas, então
+  // agrupar 45 linhas por chunk é mais previsível do que dividir por caracteres.
+  const splitByLines = (text, perChunk=45, overlap=4) => {
+    const lines = text.split('\n').filter(l => l.trim())
+    if (lines.length <= perChunk) return [lines.join('\n')]
     const chunks = []
-    let pos = 0
-    while(pos < text.length) {
-      let end = Math.min(pos + maxSize, text.length)
-      if(end < text.length) {
-        const nl = text.lastIndexOf('\n', end)
-        if(nl > pos + maxSize/3) end = nl + 1
-      }
-      chunks.push(text.slice(pos, end))
-      if(end >= text.length) break
-      // Recua overlap para garantir que transações na fronteira apareçam no próximo chunk
-      const backtrack = text.lastIndexOf('\n', end - overlap)
-      pos = backtrack > pos ? backtrack + 1 : end
+    let i = 0
+    while (i < lines.length) {
+      const end = Math.min(i + perChunk, lines.length)
+      chunks.push(lines.slice(i, end).join('\n'))
+      if (end >= lines.length) break
+      i = end - overlap
     }
     return chunks
   }
@@ -1080,19 +1075,21 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
       const rawContent = fullText.startsWith(promptPrefix) ? fullText.slice(promptPrefix.length) : fullText
       const content = preprocessText(rawContent)
 
-      // Chunks de 5.000 chars (~35-40 transações cada) para o modelo ser mais preciso
-      const CHUNK = 5000
-      const chunks = splitChunks(content, CHUNK)
+      // Divide em grupos de 45 linhas (não por chars) para não cortar transação no meio
+      const chunks = splitByLines(content, 45, 4)
 
       let allParsed = []
       let parseErr = ""
 
       for(let i=0; i<chunks.length; i++) {
         setMsg(`Analisando parte ${i+1} de ${chunks.length}... (${allParsed.length} encontradas)`)
+        // Instrução por fragmento: modelo sabe que é trecho parcial e deve extrair TUDO
+        const chunkNote = chunks.length > 1
+          ? `[FRAGMENTO ${i+1} DE ${chunks.length} — extraia CADA linha que tiver data+valor, sem pular nenhuma]\n\n`
+          : ""
         let raw = ""
-        try { raw = await callGemini([{text: promptPrefix + chunks[i]}], apiKey) }
+        try { raw = await callGemini([{text: promptPrefix + chunkNote + chunks[i]}], apiKey) }
         catch(e) {
-          // Erro de rede/rate-limit em uma parte: registra mas continua
           console.warn(`Chunk ${i+1} falhou:`, e.message)
           continue
         }
