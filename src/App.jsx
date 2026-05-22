@@ -96,7 +96,7 @@ const uid    = () => Date.now() + Math.random()
 function useFinancials(txs) {
   return useMemo(() => {
     const byM = {}
-    txs.forEach(t => {
+    txs.filter(t=>t.status==="pago").forEach(t => {
       const m = t.competencia || t.date?.slice(0,7) || ""
       if (!byM[m]) byM[m] = { e:0, s:0 }
       if (t.type==="entrada") byM[m].e += t.value
@@ -118,14 +118,16 @@ function useFinancials(txs) {
     const catData = Object.entries(catMap).map(([name,value])=>({name,value})).sort((a,b)=>b.value-a.value)
     const cm="2025-05", pm="2025-04"
     const getM = (m,type,status) => txs.filter(t=>(t.competencia||t.date?.slice(0,7))===m&&t.type===type&&(!status||t.status===status)).reduce((a,t)=>a+t.value,0)
-    const cmE=getM(cm,"entrada"), cmS=getM(cm,"saida","pago"), cmSP=getM(cm,"saida","pendente")
-    const pmE=getM(pm,"entrada"), pmS=getM(pm,"saida")
+    const cmE=getM(cm,"entrada","pago"), cmS=getM(cm,"saida","pago"), cmSP=getM(cm,"saida","pendente")
+    const pmE=getM(pm,"entrada","pago"), pmS=getM(pm,"saida","pago")
+    const cmSPE=getM(cm,"entrada","pendente")
     const evtTxs = txs.filter(t=>t.type==="entrada"&&t.category==="Eventos"&&t.status==="pago")
     const ticketMedio = evtTxs.length>0 ? evtTxs.reduce((a,t)=>a+t.value,0)/evtTxs.length : 0
-    const pending = txs.filter(t=>t.type==="saida"&&t.status==="pendente")
+    const pending  = txs.filter(t=>t.type==="saida"  &&t.status==="pendente")
+    const pendingE = txs.filter(t=>t.type==="entrada" &&t.status==="pendente")
     return { totalE, totalS, lucro:totalE-totalS, margem:totalE>0?((totalE-totalS)/totalE)*100:0,
-      monthly, fixedCosts, varCosts, catData, ticketMedio, pending,
-      cmE, cmS, cmSP, cmL:cmE-cmS, cmM:cmE>0?((cmE-cmS)/cmE)*100:0,
+      monthly, fixedCosts, varCosts, catData, ticketMedio, pending, pendingE,
+      cmE, cmS, cmSP, cmSPE, cmL:cmE-cmS, cmM:cmE>0?((cmE-cmS)/cmE)*100:0,
       pmE, pmS, pmL:pmE-pmS }
   },[txs])
 }
@@ -179,6 +181,8 @@ const INP = "w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text
 
 // ─── FORM MODAL ───────────────────────────────────────────────────────────────
 function TxForm({data,setData,onSave,onClose,onDelete,title}) {
+  const [schedMonths, setSchedMonths] = useState(0)
+  const isMensal = data.recurrence==="mensal" && !onDelete
   return (
     <Card className="border-zinc-700/60">
       <div className="flex items-center justify-between mb-4">
@@ -193,11 +197,22 @@ function TxForm({data,setData,onSave,onClose,onDelete,title}) {
         <div><label className="text-[11px] text-zinc-500 mb-1 block">Data *</label><input type="date" className={INP} value={data.date||""} onChange={e=>setData(p=>({...p,date:e.target.value}))}/></div>
         <div><label className="text-[11px] text-zinc-500 mb-1 block">Pagamento</label><select className={INP} value={data.payment||"PIX"} onChange={e=>setData(p=>({...p,payment:e.target.value}))}>{PAYMENTS.map(m=><option key={m}>{m}</option>)}</select></div>
         <div><label className="text-[11px] text-zinc-500 mb-1 block">Status</label><select className={INP} value={data.status||"pago"} onChange={e=>setData(p=>({...p,status:e.target.value}))}><option value="pago">Pago</option><option value="pendente">Pendente</option></select></div>
-        <div><label className="text-[11px] text-zinc-500 mb-1 block">Recorrência</label><select className={INP} value={data.recurrence||"none"} onChange={e=>setData(p=>({...p,recurrence:e.target.value}))}><option value="none">Avulso</option><option value="mensal">Mensal</option><option value="semanal">Semanal</option><option value="anual">Anual</option></select></div>
+        <div><label className="text-[11px] text-zinc-500 mb-1 block">Recorrência</label><select className={INP} value={data.recurrence||"none"} onChange={e=>{setData(p=>({...p,recurrence:e.target.value}));setSchedMonths(0)}}><option value="none">Avulso</option><option value="mensal">Mensal</option><option value="semanal">Semanal</option><option value="anual">Anual</option></select></div>
         <div className="sm:col-span-2 lg:col-span-3"><label className="text-[11px] text-zinc-500 mb-1 block">Observação</label><input className={INP} value={data.obs||""} onChange={e=>setData(p=>({...p,obs:e.target.value}))} placeholder="Opcional"/></div>
       </div>
+      {isMensal&&(
+        <div className="mt-3 flex items-center gap-3 bg-indigo-500/5 border border-indigo-500/20 rounded-lg px-3 py-2.5">
+          <input type="checkbox" id="sched" checked={schedMonths>0} onChange={e=>setSchedMonths(e.target.checked?12:0)} className="accent-indigo-400 w-4 h-4 flex-shrink-0"/>
+          <label htmlFor="sched" className="text-sm text-zinc-300 flex-1 cursor-pointer">Programar para os próximos</label>
+          <select disabled={schedMonths===0} value={schedMonths||12} onChange={e=>setSchedMonths(Number(e.target.value))} className={`${INP} w-28 py-1 text-xs ${schedMonths===0?"opacity-40":""}`}>
+            {[3,6,12,24].map(n=><option key={n} value={n}>{n} meses</option>)}
+          </select>
+        </div>
+      )}
       <div className="flex items-center gap-2 mt-4 flex-wrap">
-        <button onClick={onSave} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-lg px-5 py-2 transition-colors">Salvar</button>
+        <button onClick={()=>onSave(schedMonths)} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-lg px-5 py-2 transition-colors">
+          {schedMonths>0?`Criar ${schedMonths} lançamentos`:"Salvar"}
+        </button>
         <button onClick={onClose} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg px-4 py-2 transition-colors">Cancelar</button>
         {onDelete&&<button onClick={onDelete} className="ml-auto flex items-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-sm rounded-lg px-4 py-2 transition-colors"><Trash2 size={13}/>Excluir</button>}
       </div>
@@ -223,7 +238,7 @@ function Dashboard({fin,txs}) {
   return (
     <Section title="Dashboard" sub="Visão estratégica em tempo real">
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-        <KPI label="Faturamento Mês" value={fmt(fin.cmE)} sub={`${te>=0?"+":""}${fmtPct(te)} vs ant.`} trend={te} color="emerald" icon={TrendingUp}/>
+        <KPI label="Faturamento Mês" value={fmt(fin.cmE)} sub={fin.cmSPE>0?`+${fmt(fin.cmSPE)} a receber`:`${te>=0?"+":""}${fmtPct(te)} vs ant.`} trend={te} color="emerald" icon={TrendingUp}/>
         <KPI label="Custos Mês" value={fmt(fin.cmS)} sub={`+${fmt(fin.cmSP)} pendente`} color="rose" icon={TrendingDown}/>
         <KPI label="Lucro Líquido" value={fmt(fin.cmL)} sub={`Margem ${fmtPct(fin.cmM)}`} trend={tl} color={fin.cmL>=0?"indigo":"rose"} icon={CircleDollarSign}/>
         <KPI label="Ticket Médio" value={fmt(fin.ticketMedio)} sub="Por evento" color="amber" icon={Wallet}/>
@@ -231,8 +246,8 @@ function Dashboard({fin,txs}) {
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         <KPI label="Total Entradas" value={fmt(fin.totalE)} color="emerald" icon={ArrowUpRight}/>
         <KPI label="Total Saídas" value={fmt(fin.totalS)} color="rose" icon={ArrowDownRight}/>
-        <KPI label="Resultado Acum." value={fmt(fin.lucro)} sub={`Margem ${fmtPct(fin.margem)}`} color={fin.lucro>=0?"violet":"rose"} icon={PiggyBank}/>
-        <KPI label="A Pagar" value={fmt(fin.pending.reduce((a,t)=>a+t.value,0))} sub={`${fin.pending.length} lançamentos`} color="amber" icon={Clock}/>
+        <KPI label="A Receber" value={fmt(fin.pendingE.reduce((a,t)=>a+t.value,0))} sub={`${fin.pendingE.length} lançamento${fin.pendingE.length!==1?"s":""}`} color="sky" icon={ArrowUpRight}/>
+        <KPI label="A Pagar" value={fmt(fin.pending.reduce((a,t)=>a+t.value,0))} sub={`${fin.pending.length} lançamento${fin.pending.length!==1?"s":""}`} color="amber" icon={Clock}/>
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
         <Card className="xl:col-span-2">
@@ -319,9 +334,22 @@ function Lancamentos({txs,setTxs}) {
     return true
   }).sort((a,b)=>b.date.localeCompare(a.date)),[txs,filt,q])
 
-  const save = () => {
+  const save = (schedMonths=0) => {
     if(!form.name||!form.value||!form.date) return
-    setTxs(p=>[...p,{...form,id:uid(),value:parseFloat(form.value),competencia:form.competencia||form.date.slice(0,7)}])
+    const base = {...form, value:parseFloat(form.value), competencia:form.competencia||form.date.slice(0,7)}
+    if(schedMonths>0 && form.recurrence==="mensal") {
+      const now = new Date().toISOString().slice(0,7)
+      const newTxs = Array.from({length:schedMonths},(_,i)=>{
+        const d = new Date(base.date); d.setDate(1); d.setMonth(d.getMonth()+i)
+        d.setDate(Math.min(new Date(base.date).getDate(), new Date(d.getFullYear(),d.getMonth()+1,0).getDate()))
+        const dateStr = d.toISOString().slice(0,10)
+        const comp    = dateStr.slice(0,7)
+        return {...base, id:uid(), date:dateStr, competencia:comp, status:comp>now?"pendente":base.status}
+      })
+      setTxs(p=>[...p,...newTxs])
+    } else {
+      setTxs(p=>[...p,{...base,id:uid()}])
+    }
     setForm(blank); setShow(false)
   }
   const saveEdit = () => {
@@ -1575,13 +1603,14 @@ function PersonalDashboard({ txs, cats }) {
   const cmTxs = txs.filter(t => (t.competencia||t.date?.slice(0,7)) === curM)
   const pmTxs = txs.filter(t => (t.competencia||t.date?.slice(0,7)) === prevM)
 
-  const cmInc  = cmTxs.filter(t=>t.type==="entrada").reduce((a,t)=>a+t.value,0)
-  const cmExp  = cmTxs.filter(t=>t.type==="saida"&&t.status==="pago").reduce((a,t)=>a+t.value,0)
+  const cmInc  = cmTxs.filter(t=>t.type==="entrada"&&t.status==="pago").reduce((a,t)=>a+t.value,0)
+  const cmExp  = cmTxs.filter(t=>t.type==="saida"  &&t.status==="pago").reduce((a,t)=>a+t.value,0)
   const cmBal  = cmInc - cmExp
-  const pmInc  = pmTxs.filter(t=>t.type==="entrada").reduce((a,t)=>a+t.value,0)
-  const pmExp  = pmTxs.filter(t=>t.type==="saida"&&t.status==="pago").reduce((a,t)=>a+t.value,0)
+  const pmInc  = pmTxs.filter(t=>t.type==="entrada"&&t.status==="pago").reduce((a,t)=>a+t.value,0)
+  const pmExp  = pmTxs.filter(t=>t.type==="saida"  &&t.status==="pago").reduce((a,t)=>a+t.value,0)
   const pmBal  = pmInc - pmExp
-  const pendng = txs.filter(t=>t.type==="saida"&&t.status==="pendente").reduce((a,t)=>a+t.value,0)
+  const pendng  = txs.filter(t=>t.type==="saida"  &&t.status==="pendente").reduce((a,t)=>a+t.value,0)
+  const pendngE = txs.filter(t=>t.type==="entrada" &&t.status==="pendente").reduce((a,t)=>a+t.value,0)
 
   // Spending by category this month
   const byCat = {}
@@ -1643,6 +1672,13 @@ function PersonalDashboard({ txs, cats }) {
           <p className={`text-lg font-bold font-mono ${pendng>0?"text-amber-400":"text-zinc-500"}`}>{fmt(pendng)}</p>
           <p className="text-[10px] text-zinc-600">{txs.filter(t=>t.type==="saida"&&t.status==="pendente").length} lançamentos</p>
         </div>
+        {pendngE>0&&(
+          <div className="border rounded-xl p-3 bg-sky-500/5 border-sky-500/20">
+            <p className="text-[11px] text-zinc-500 mb-0.5">A Receber</p>
+            <p className="text-lg font-bold font-mono text-sky-400">{fmt(pendngE)}</p>
+            <p className="text-[10px] text-zinc-600">{txs.filter(t=>t.type==="entrada"&&t.status==="pendente").length} lançamentos</p>
+          </div>
+        )}
       </div>
 
       {/* Spending by category */}
@@ -1736,10 +1772,25 @@ function PersonalTxs({ txs, setTxs, cats }) {
     return true
   }).sort((a,b)=>b.date.localeCompare(a.date)), [txs,filt,q,month])
 
+  const [schedMonths, setSchedMonths] = useState(0)
+
   const save = () => {
     if(!form.name||!form.value||!form.date) return
-    setTxs(p=>[...p,{...form,id:uid(),value:parseFloat(form.value),competencia:form.date.slice(0,7)}])
-    setForm(blank); setShow(false)
+    const base = {...form, value:parseFloat(form.value), competencia:form.date.slice(0,7)}
+    if(schedMonths>0 && form.recurrence==="mensal") {
+      const now = new Date().toISOString().slice(0,7)
+      const newTxs = Array.from({length:schedMonths},(_,i)=>{
+        const d = new Date(base.date); d.setDate(1); d.setMonth(d.getMonth()+i)
+        d.setDate(Math.min(new Date(base.date).getDate(), new Date(d.getFullYear(),d.getMonth()+1,0).getDate()))
+        const dateStr = d.toISOString().slice(0,10)
+        const comp    = dateStr.slice(0,7)
+        return {...base, id:uid(), date:dateStr, competencia:comp, status:comp>now?"pendente":base.status}
+      })
+      setTxs(p=>[...p,...newTxs])
+    } else {
+      setTxs(p=>[...p,{...base,id:uid()}])
+    }
+    setForm(blank); setSchedMonths(0); setShow(false)
   }
   const saveEdit = () => {
     if(!edit) return
@@ -1751,8 +1802,8 @@ function PersonalTxs({ txs, setTxs, cats }) {
   const activeData    = edit || form
   const setActiveData = edit ? setEdit : setForm
   const typeCats      = cats.filter(c=>c.type===(activeData.type||"saida"))
-  const totInc        = filtered.filter(t=>t.type==="entrada").reduce((a,t)=>a+t.value,0)
-  const totExp        = filtered.filter(t=>t.type==="saida"&&t.status==="pago").reduce((a,t)=>a+t.value,0)
+  const totInc        = filtered.filter(t=>t.type==="entrada"&&t.status==="pago").reduce((a,t)=>a+t.value,0)
+  const totExp        = filtered.filter(t=>t.type==="saida"  &&t.status==="pago").reduce((a,t)=>a+t.value,0)
 
   return (
     <div className="space-y-4">
@@ -1792,11 +1843,22 @@ function PersonalTxs({ txs, setTxs, cats }) {
             <div className="col-span-2"><label className="text-[11px] text-zinc-500 block mb-1">Descrição *</label><input className={INP} value={activeData.name||""} onChange={e=>setActiveData(p=>({...p,name:e.target.value}))} placeholder="Ex: Supermercado"/></div>
             <div><label className="text-[11px] text-zinc-500 block mb-1">Valor (R$) *</label><input type="number" className={`${INP} font-mono`} value={activeData.value||""} onChange={e=>setActiveData(p=>({...p,value:e.target.value}))} placeholder="0,00"/></div>
             <div><label className="text-[11px] text-zinc-500 block mb-1">Data *</label><input type="date" className={INP} value={activeData.date||""} onChange={e=>setActiveData(p=>({...p,date:e.target.value}))}/></div>
-            <div><label className="text-[11px] text-zinc-500 block mb-1">Pagamento</label><select className={INP} value={activeData.payment||"PIX"} onChange={e=>setActiveData(p=>({...p,payment:e.target.value}))}>{PAYMENTS.map(m=><option key={m}>{m}</option>)}</select></div>
             <div><label className="text-[11px] text-zinc-500 block mb-1">Status</label><select className={INP} value={activeData.status||"pago"} onChange={e=>setActiveData(p=>({...p,status:e.target.value}))}><option value="pago">Pago</option><option value="pendente">Pendente</option></select></div>
+            <div><label className="text-[11px] text-zinc-500 block mb-1">Recorrência</label><select className={INP} value={activeData.recurrence||"none"} onChange={e=>{setActiveData(p=>({...p,recurrence:e.target.value}));setSchedMonths(0)}}><option value="none">Avulso</option><option value="mensal">Mensal</option><option value="anual">Anual</option></select></div>
           </div>
+          {!edit && activeData.recurrence==="mensal" && (
+            <div className="flex items-center gap-3 bg-indigo-500/5 border border-indigo-500/20 rounded-lg px-3 py-2.5">
+              <input type="checkbox" id="schedP" checked={schedMonths>0} onChange={e=>setSchedMonths(e.target.checked?12:0)} className="accent-indigo-400 w-4 h-4 flex-shrink-0"/>
+              <label htmlFor="schedP" className="text-sm text-zinc-300 flex-1 cursor-pointer">Programar para os próximos</label>
+              <select disabled={schedMonths===0} value={schedMonths||12} onChange={e=>setSchedMonths(Number(e.target.value))} className={`${INP} w-28 py-1 text-xs ${schedMonths===0?"opacity-40":""}`}>
+                {[3,6,12,24].map(n=><option key={n} value={n}>{n} meses</option>)}
+              </select>
+            </div>
+          )}
           <div className="flex items-center gap-2 pt-1">
-            <button onClick={edit?saveEdit:save} className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-xl py-2.5 transition-colors">Salvar</button>
+            <button onClick={edit?saveEdit:save} className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-xl py-2.5 transition-colors">
+              {!edit&&schedMonths>0?`Criar ${schedMonths} lançamentos`:"Salvar"}
+            </button>
             {edit&&<button onClick={()=>del(edit.id)} className="flex items-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-sm rounded-xl px-4 py-2.5 transition-colors"><Trash2 size={13}/>Excluir</button>}
           </div>
         </div>
