@@ -1034,27 +1034,73 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
 
   const callClaude = (parts) => callGemini(parts, apiKey)
 
+  // Divide texto em partes por quebras de linha, sem cortar no meio de uma transação
+  const splitChunks = (text, maxSize) => {
+    if(text.length <= maxSize) return [text]
+    const chunks = []
+    let pos = 0
+    while(pos < text.length) {
+      let end = Math.min(pos + maxSize, text.length)
+      if(end < text.length) {
+        const nl = text.lastIndexOf('\n', end)
+        if(nl > pos + maxSize/2) end = nl + 1
+      }
+      chunks.push(text.slice(pos, end))
+      pos = end
+    }
+    return chunks
+  }
+
+  const parseRawJSON = raw => {
+    try {
+      const clean = raw.replace(/```json|```/g,"").trim()
+      const m = clean.match(/\[[\s\S]*\]/)
+      if(m) return JSON.parse(m[0])
+      if(clean.startsWith("[")) return JSON.parse(clean)
+      return []
+    } catch(e) { console.error("Parse JSON falhou:", e); return null }
+  }
+
   const process = async (blocks,name) => {
     setStage("loading"); setMsg("IA analisando..."); setAnalysis("")
     try {
-      const raw = await callGemini(blocks, apiKey)
-      let parsed=[]
-      let parseErr=""
-      try{
-        const clean=raw.replace(/```json|```/g,"").trim()
-        const m=clean.match(/\[[\s\S]*\]/)
-        if(m) parsed=JSON.parse(m[0])
-        else if(clean.startsWith("[")) parsed=JSON.parse(clean)
-        else if(clean==="[]"||clean==="[ ]") parsed=[]
-      }catch(e){
-        console.error("Parse JSON falhou:", e, "\nResposta raw:", raw)
-        parseErr=`IA retornou formato inválido. Tente novamente ou simplify o texto.`
+      // Extrair conteúdo puro separando o prompt
+      const fullText = blocks.filter(p=>p.text).map(p=>p.text).join('\n')
+      const promptPrefix = EXTRACTION_PROMPT + "\n\n"
+      const content = fullText.startsWith(promptPrefix) ? fullText.slice(promptPrefix.length) : fullText
+
+      // Dividir em partes de 10.000 chars (cada request fica ~3500 tokens)
+      const CHUNK = 10000
+      const chunks = splitChunks(content, CHUNK)
+
+      let allParsed = []
+      let parseErr = ""
+
+      for(let i=0; i<chunks.length; i++) {
+        if(chunks.length > 1) setMsg(`Analisando parte ${i+1} de ${chunks.length}...`)
+        const raw = await callGemini([{text: promptPrefix + chunks[i]}], apiKey)
+        const parsed = parseRawJSON(raw)
+        if(parsed === null) { parseErr = "IA retornou formato inválido em uma das partes. Tente novamente."; break }
+        allParsed.push(...parsed)
       }
-      if(parseErr){setAnalysis(parseErr);setStage("error");return}
-      if(!parsed.length){
+
+      if(parseErr){ setAnalysis(parseErr); setStage("error"); return }
+
+      // Deduplicar entre chunks: mesma data + valor + tipo + nome similar
+      const seen = new Set()
+      allParsed = allParsed.filter(t => {
+        const key = `${t.date}_${Math.round((parseFloat(t.value)||0)*100)}_${t.type}_${(t.name||"").slice(0,20).toLowerCase().replace(/\s+/g,"")}`
+        if(seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+
+      if(!allParsed.length){
         setAnalysis("Nenhuma movimentação encontrada. Verifique se o texto contém datas e valores financeiros.")
         setItems([]);setStage("preview");return
       }
+
+      const parsed = allParsed
       const withMeta = parsed.map((t,i)=>({
         ...t,id:`i_${Date.now()}_${i}`,
         value:typeof t.value==="string"?parseFloat(String(t.value).replace(/\./g,"").replace(",","."))||0:Number(t.value)||0,
@@ -1125,7 +1171,7 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
         try {
           const txt = await toTxt(file)
           if (txt && txt.trim().length > 50) {
-            await process([{text:EXTRACTION_PROMPT+"\n\n"+txt.slice(0,12000)}],file.name)
+            await process([{text:EXTRACTION_PROMPT+"\n\n"+txt}],file.name)
           } else {
             setErrorMsg("PDF sem texto legível. Abra o PDF, selecione todo o texto (Ctrl+A), copie e use a aba 'Colar Texto'.")
             setStage("error")
@@ -1374,10 +1420,10 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
           .filter(n=>sheetType(n)!=="skip")
           .map(n=>`[Planilha: ${n}]\n${XLSX.utils.sheet_to_csv(wb.Sheets[n]).slice(0,2000)}`)
           .join("\n\n")
-        await process([{text:EXTRACTION_PROMPT+"\n\n"+allCsv.slice(0,12000)}],file.name)
+        await process([{text:EXTRACTION_PROMPT+"\n\n"+allCsv}],file.name)
       }else{
         const txt=await toTxt(file)
-        await process([{text:EXTRACTION_PROMPT+"\n\n"+txt.slice(0,12000)}],file.name)
+        await process([{text:EXTRACTION_PROMPT+"\n\n"+txt}],file.name)
       }
     }catch(e){setAnalysis(e.message);setStage("error")}
   }
@@ -1420,7 +1466,7 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
               <p className="text-sm font-semibold text-zinc-300 mb-1">Cole o conteúdo do extrato</p>
               <p className="text-xs text-zinc-500 mb-3">Funciona com extrato bancário copiado, CSV em texto, lista de pagamentos com datas e valores.</p>
               <textarea className={`${INP} resize-none font-mono text-xs`} rows={10} placeholder={"01/05/2025  PIX RECEBIDO FESTA INFANTIL  +1800,00\n05/05/2025  PAGAMENTO ALUGUEL  -2200,00\n10/05/2025  ENERGIA ELETRICA  -480,00"} value={pasted} onChange={e=>setPasted(e.target.value)}/>
-              <button onClick={()=>process([{text:EXTRACTION_PROMPT+"\n\n"+pasted.slice(0,12000)}],"Texto colado")} disabled={!pasted.trim()} className="mt-3 w-full flex items-center justify-center gap-2 bg-violet-500 hover:bg-violet-400 disabled:opacity-40 text-white font-semibold text-sm rounded-xl py-3 transition-colors"><Brain size={15}/>Analisar com IA</button>
+              <button onClick={()=>process([{text:EXTRACTION_PROMPT+"\n\n"+pasted}],"Texto colado")} disabled={!pasted.trim()} className="mt-3 w-full flex items-center justify-center gap-2 bg-violet-500 hover:bg-violet-400 disabled:opacity-40 text-white font-semibold text-sm rounded-xl py-3 transition-colors"><Brain size={15}/>Analisar com IA</button>
             </Card>
           )}
           {history.length>0&&(
