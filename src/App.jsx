@@ -978,18 +978,29 @@ function SettingsModal({ apiKey, setApiKey, onClose }) {
 }
 
 // ─── IMPORTAÇÃO IA ────────────────────────────────────────────────────────────
-const EXTRACTION_PROMPT = `Você é especialista em contabilidade brasileira. Extraia TODAS as movimentações financeiras do texto abaixo.
+const EXTRACTION_PROMPT = `Você é especialista em contabilidade brasileira. Extraia TODAS as movimentações financeiras REAIS do texto abaixo.
 
 O texto pode ser um extrato bancário, fatura, lista de pagamentos, recibo, nota fiscal ou qualquer documento financeiro.
 
 REGRAS CRÍTICAS:
-1. Extraia CADA linha/item que tenha data + valor. Não pule nenhum.
+1. Extraia CADA linha/item que tenha data + valor. Não pule nenhum item real.
 2. Valores com "+" ou "Crédito" ou "PIX recebido" ou "TED recebida" → type: "entrada"
 3. Valores com "-" ou "Débito" ou "Pagamento" ou "TED enviada" → type: "saida"
 4. Se não houver sinal explícito: pagamentos de contas são "saida", recebimentos são "entrada"
 5. value deve ser número positivo (sem sinal): ex: 1800.50
 6. date no formato YYYY-MM-DD. Se só tiver dia/mês, use 2025 como ano.
 7. Se a data estiver apenas no cabeçalho do extrato, use-a para todos os itens sem data própria.
+
+IGNORAR COMPLETAMENTE (NÃO incluir no JSON) — são movimentações internas entre contas próprias, não são receita nem despesa real:
+- "Dinheiro retirado de [cofrinho / cofre / reserva / poupança / investimento]"
+- "Dinheiro adicionado a [cofrinho / cofre / reserva / poupança]"
+- "Dinheiro enviado para cofrinho" / "Resgate do cofrinho"
+- "Transferência entre contas próprias" / "Movimentação interna"
+- "Aplicação em [poupança / CDB / fundo / investimento]"
+- "Resgate de [poupança / CDB / fundo / investimento]"
+- Qualquer linha em que a MESMA pessoa está dos dois lados da transação
+
+ATENÇÃO — valores repetidos: se o mesmo valor aparece duas vezes na mesma data (ex: uma saída R$500 e uma entrada R$500 no mesmo dia), verifique as descrições. Se uma é "retirada de cofrinho" e outra é "pagamento X", a retirada deve ser IGNORADA — só inclua o pagamento real.
 
 Categorias ENTRADA: Serviços, Eventos, Vendas de Produtos, Reembolsos, Receitas Extras, Outros
 Categorias SAÍDA: Aluguel, Energia/Água, Folha de Pagamento, Freelancers, Impostos, Marketing, Manutenção, Materiais, Plataformas/Software, Equipamentos, Despesas Operacionais, Outros
@@ -1006,7 +1017,7 @@ Mapeamento de categorias:
 RETORNE SOMENTE O JSON ARRAY, sem texto antes ou depois, sem markdown:
 [{"name":"descrição","date":"2025-05-10","value":1800.00,"type":"entrada","category":"Receitas Extras","payment":"PIX","obs":""}]
 
-Se o texto não contiver movimentações financeiras, retorne somente: []
+Se o texto não contiver movimentações financeiras reais, retorne somente: []
 
 DOCUMENTO:`
 
@@ -1050,8 +1061,43 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
         status:"pago",recurrence:"none",competencia:t.date?.slice(0,7)||new Date().toISOString().slice(0,7),
         payment:t.payment||"PIX",type:["entrada","saida"].includes(t.type)?t.type:"saida",
       }))
-      const dupeSet = new Set(withMeta.filter(t=>txs.some(e=>Math.abs(e.value-t.value)<0.01&&e.date===t.date&&e.type===t.type)).map(t=>t.id))
-      setDupes(dupeSet); setSel(new Set(withMeta.filter(t=>!dupeSet.has(t.id)).map(t=>t.id))); setItems(withMeta)
+
+      // ── Detectar movimentações internas / transferências ─────────────────────
+      const TRANSFER_RE = /cofrinho|cofre digital|cofre|reserva pessoal|dinheiro retirado de|dinheiro adicionado|dinheiro enviado para|resgate.*poupan|aplica[cç].*poupan|transfer.*conta.*pr[oó]pria|movimenta[cç].*interna|entre.*contas/i
+      const isTransfer = name => TRANSFER_RE.test(name||"")
+
+      // Marcar como transferência itens detectados pelo nome
+      withMeta.forEach(t => { if(isTransfer(t.name||t.obs||"")) t._transfer = true })
+
+      // Detectar pares: mesmo valor na mesma data, um entrada e um saida — um deles é transferência
+      const byDateVal = {}
+      withMeta.forEach(t => {
+        const k = `${t.date}_${Math.round(t.value*100)}`
+        if(!byDateVal[k]) byDateVal[k] = []
+        byDateVal[k].push(t)
+      })
+      Object.values(byDateVal).forEach(group => {
+        if(group.length < 2) return
+        const hasE = group.find(t=>t.type==="entrada")
+        const hasS = group.find(t=>t.type==="saida")
+        if(hasE && hasS) {
+          // Se um deles já é marcado como transferência, marcar o outro também
+          if(hasE._transfer || isTransfer(hasS.name||"")) hasS._transfer = true
+          if(hasS._transfer || isTransfer(hasE.name||"")) hasE._transfer = true
+        }
+      })
+
+      // Duplicatas contra lançamentos já existentes (checar nome + valor + data + tipo)
+      const dupeSet = new Set(withMeta.filter(t=>
+        txs.some(e=>Math.abs(e.value-t.value)<0.01&&e.date===t.date&&e.type===t.type&&
+          (e.name?.toLowerCase()===t.name?.toLowerCase()||Math.abs(e.value-t.value)<0.01))
+      ).map(t=>t.id))
+
+      // Transferências e duplicatas ficam desmarcadas por padrão
+      const skipSet = new Set([...withMeta.filter(t=>t._transfer).map(t=>t.id), ...dupeSet])
+      setDupes(new Set([...dupeSet,...withMeta.filter(t=>t._transfer).map(t=>t.id)]))
+      setSel(new Set(withMeta.filter(t=>!skipSet.has(t.id)).map(t=>t.id)))
+      setItems(withMeta)
       try{
         const tE=withMeta.filter(t=>t.type==="entrada").reduce((a,t)=>a+t.value,0)
         const tS=withMeta.filter(t=>t.type==="saida").reduce((a,t)=>a+t.value,0)
@@ -1415,7 +1461,14 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
               <div key={i} className={`border rounded-xl p-3 text-center ${k.c.card}`}><p className="text-xs text-zinc-500">{k.l}</p><p className={`text-lg font-bold font-mono ${k.c.text}`}>{k.v}</p></div>
             ))}
           </div>
-          {dupes.size>0&&<div className="flex items-center gap-2 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 text-sm text-amber-300"><TriangleAlert size={14} className="flex-shrink-0"/>{dupes.size} possível{dupes.size>1?"is":""} duplicata{dupes.size>1?"s":""} desmarcada{dupes.size>1?"s":""}.</div>}
+          {(()=>{
+            const transfers = items.filter(t=>t._transfer)
+            const dupesOnly = items.filter(t=>dupes.has(t.id)&&!t._transfer)
+            return (<>
+              {transfers.length>0&&<div className="flex items-center gap-2 bg-sky-500/5 border border-sky-500/20 rounded-xl p-3 text-sm text-sky-300"><TriangleAlert size={14} className="flex-shrink-0"/>{transfers.length} movimentação{transfers.length>1?"s":""} interna{transfers.length>1?"s":""} detectada{transfers.length>1?"s":""} (cofrinho/transferência) — desmarcada{transfers.length>1?"s":""}. Confirme antes de importar.</div>}
+              {dupesOnly.length>0&&<div className="flex items-center gap-2 bg-amber-500/5 border border-amber-500/20 rounded-xl p-3 text-sm text-amber-300"><TriangleAlert size={14} className="flex-shrink-0"/>{dupesOnly.length} possível{dupesOnly.length>1?"is":""} duplicata{dupesOnly.length>1?"s":""} desmarcada{dupesOnly.length>1?"s":""}.</div>}
+            </>)
+          })()}
           {analysis&&<div className="bg-violet-500/5 border border-violet-500/20 rounded-xl p-4"><div className="flex items-center gap-2 mb-2"><Sparkles size={13} className="text-violet-400"/><p className="text-sm font-semibold text-violet-300">Análise da IA</p></div><p className="text-sm text-zinc-400 whitespace-pre-line">{analysis}</p></div>}
           {items.length===0
             ?<Card className="text-center py-8"><p className="text-zinc-500">Nenhuma movimentação encontrada.</p><button onClick={()=>{reset();setTab("colar")}} className="mt-3 text-sm text-violet-400 underline">Tente colar o texto</button></Card>
@@ -1427,7 +1480,7 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
               <Card className="p-0 overflow-hidden">
                 <div className="divide-y divide-zinc-800/40 max-h-[400px] overflow-y-auto">
                   {items.map(t=>(
-                    <div key={t.id} className={`px-3 py-3 transition-colors ${sel.has(t.id)?"":"opacity-40"} ${dupes.has(t.id)?"bg-amber-500/5":""}`}>
+                    <div key={t.id} className={`px-3 py-3 transition-colors ${sel.has(t.id)?"":"opacity-50"} ${t._transfer?"bg-sky-500/5":dupes.has(t.id)?"bg-amber-500/5":""}`}>
                       <div className="flex items-start gap-3">
                         <button onClick={()=>toggleSel(t.id)} className={`w-5 h-5 rounded flex items-center justify-center flex-shrink-0 mt-0.5 border transition-colors ${sel.has(t.id)?"bg-violet-500 border-violet-500":"border-zinc-600"}`}>{sel.has(t.id)&&<Check size={11} className="text-white"/>}</button>
                         <div className="flex-1 min-w-0 space-y-1.5">
@@ -1436,7 +1489,8 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
                             <span className={`w-1.5 h-1.5 rounded-full ${t.type==="entrada"?"bg-emerald-400":"bg-rose-400"}`}/>
                             <select className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-300 outline-none" value={t.category} onChange={e=>updateItem(t.id,"category",e.target.value)}>{(CATS[t.type]||[]).map(c=><option key={c}>{c}</option>)}</select>
                             <input type="date" className="bg-zinc-800 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-400 outline-none" value={t.date} onChange={e=>updateItem(t.id,"date",e.target.value)}/>
-                            {dupes.has(t.id)&&<span className="text-[10px] text-amber-400 bg-amber-400/10 rounded px-1">duplicata?</span>}
+                            {t._transfer&&<span className="text-[10px] text-sky-400 bg-sky-400/10 rounded px-1.5 py-0.5">↔ transferência</span>}
+                            {dupes.has(t.id)&&!t._transfer&&<span className="text-[10px] text-amber-400 bg-amber-400/10 rounded px-1">duplicata?</span>}
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-1 flex-shrink-0">
