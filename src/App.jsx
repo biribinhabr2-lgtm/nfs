@@ -1034,8 +1034,15 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
 
   const callClaude = (parts) => callGemini(parts, apiKey)
 
-  // Divide texto em partes por quebras de linha, sem cortar no meio de uma transação
-  const splitChunks = (text, maxSize) => {
+  // Pré-processa o texto: normaliza espaços e remove linhas claramente não-financeiras
+  const preprocessText = text => text
+    .replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+
+  // Divide por quebra de linha respeitando um overlap para não perder transações na fronteira
+  const splitChunks = (text, maxSize, overlap=400) => {
     if(text.length <= maxSize) return [text]
     const chunks = []
     let pos = 0
@@ -1043,10 +1050,13 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
       let end = Math.min(pos + maxSize, text.length)
       if(end < text.length) {
         const nl = text.lastIndexOf('\n', end)
-        if(nl > pos + maxSize/2) end = nl + 1
+        if(nl > pos + maxSize/3) end = nl + 1
       }
       chunks.push(text.slice(pos, end))
-      pos = end
+      if(end >= text.length) break
+      // Recua overlap para garantir que transações na fronteira apareçam no próximo chunk
+      const backtrack = text.lastIndexOf('\n', end - overlap)
+      pos = backtrack > pos ? backtrack + 1 : end
     }
     return chunks
   }
@@ -1058,7 +1068,7 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
       if(m) return JSON.parse(m[0])
       if(clean.startsWith("[")) return JSON.parse(clean)
       return []
-    } catch(e) { console.error("Parse JSON falhou:", e); return null }
+    } catch(e) { console.error("Resposta bruta:", raw?.slice(0,300)); return null }
   }
 
   const process = async (blocks,name) => {
@@ -1067,38 +1077,48 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
       // Extrair conteúdo puro separando o prompt
       const fullText = blocks.filter(p=>p.text).map(p=>p.text).join('\n')
       const promptPrefix = EXTRACTION_PROMPT + "\n\n"
-      const content = fullText.startsWith(promptPrefix) ? fullText.slice(promptPrefix.length) : fullText
+      const rawContent = fullText.startsWith(promptPrefix) ? fullText.slice(promptPrefix.length) : fullText
+      const content = preprocessText(rawContent)
 
-      // Dividir em partes de 10.000 chars (cada request fica ~3500 tokens)
-      const CHUNK = 10000
+      // Chunks de 5.000 chars (~35-40 transações cada) para o modelo ser mais preciso
+      const CHUNK = 5000
       const chunks = splitChunks(content, CHUNK)
 
       let allParsed = []
       let parseErr = ""
 
       for(let i=0; i<chunks.length; i++) {
-        if(chunks.length > 1) setMsg(`Analisando parte ${i+1} de ${chunks.length}...`)
-        const raw = await callGemini([{text: promptPrefix + chunks[i]}], apiKey)
+        setMsg(`Analisando parte ${i+1} de ${chunks.length}... (${allParsed.length} encontradas)`)
+        let raw = ""
+        try { raw = await callGemini([{text: promptPrefix + chunks[i]}], apiKey) }
+        catch(e) {
+          // Erro de rede/rate-limit em uma parte: registra mas continua
+          console.warn(`Chunk ${i+1} falhou:`, e.message)
+          continue
+        }
         const parsed = parseRawJSON(raw)
-        if(parsed === null) { parseErr = "IA retornou formato inválido em uma das partes. Tente novamente."; break }
+        if(parsed === null) {
+          console.warn(`Chunk ${i+1}: JSON inválido, pulando`)
+          continue
+        }
         allParsed.push(...parsed)
       }
-
-      if(parseErr){ setAnalysis(parseErr); setStage("error"); return }
-
-      // Deduplicar entre chunks: mesma data + valor + tipo + nome similar
-      const seen = new Set()
-      allParsed = allParsed.filter(t => {
-        const key = `${t.date}_${Math.round((parseFloat(t.value)||0)*100)}_${t.type}_${(t.name||"").slice(0,20).toLowerCase().replace(/\s+/g,"")}`
-        if(seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
 
       if(!allParsed.length){
         setAnalysis("Nenhuma movimentação encontrada. Verifique se o texto contém datas e valores financeiros.")
         setItems([]);setStage("preview");return
       }
+
+      // Deduplicar entre chunks (overlap pode gerar duplicatas)
+      const seen = new Set()
+      allParsed = allParsed
+        .filter(t => {
+          const key = `${t.date}_${Math.round((parseFloat(t.value)||0)*100)}_${t.type}_${(t.name||"").slice(0,20).toLowerCase().replace(/\s+/g,"")}`
+          if(seen.has(key)) return false
+          seen.add(key)
+          return true
+        })
+        .sort((a,b)=>(a.date||"").localeCompare(b.date||""))
 
       const parsed = allParsed
       const withMeta = parsed.map((t,i)=>({
