@@ -2025,8 +2025,6 @@ function PersonalCharts({ txs, cats }) {
         }
       </div>
     </div>
-      )}
-    </div>
   )
 }
 
@@ -2366,11 +2364,6 @@ export default function App() {
   const cur = NAV.find(n=>n.id===page)
   const go  = useCallback(id => { setPage(id); setMobileMenu(false) }, [])
 
-  // ── Route to personal app if profile type is personal ───────────────────
-  if(activeProfile?.type === "personal") {
-    return <PersonalApp key={profileId} profileId={profileId} profileHook={profileHook} dark={dark} setDark={setDark}/>
-  }
-
   const PAGES = useMemo(() => ({
     dashboard:    <Dashboard fin={fin} txs={txs}/>,
     lancamentos:  <Lancamentos txs={txs} setTxs={setTxs}/>,
@@ -2381,6 +2374,11 @@ export default function App() {
     importacao:   <ImportacaoIA txs={txs} setTxs={setTxs} apiKey={apiKey}/>,
     inteligencia: <InteligenciaFinanceira fin={fin} txs={txs} apiKey={apiKey}/>,
   }), [fin, txs, svcs, setTxs, setSvcs, apiKey])
+
+  // ── Route to personal app if profile type is personal ───────────────────
+  if(activeProfile?.type === "personal") {
+    return <PersonalApp key={profileId} profileId={profileId} profileHook={profileHook} dark={dark} setDark={setDark}/>
+  }
 
   return (
     <div key={profileId} className={`flex ${dark?"bg-zinc-950 text-zinc-100":"bg-slate-50 text-zinc-900"}`} style={{height:"100dvh",overflow:"hidden"}}>
