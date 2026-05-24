@@ -1179,25 +1179,116 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
       const toB64=f=>new Promise((r,j)=>{const rd=new FileReader();rd.onload=()=>r(rd.result.split(",")[1]);rd.onerror=j;rd.readAsDataURL(f)})
       const toTxt=f=>new Promise((r,j)=>{const rd=new FileReader();rd.onload=()=>r(rd.result);rd.onerror=j;rd.readAsText(f,"utf-8")})
       if(["jpg","jpeg","png","gif","webp"].includes(ext)){
-        setErrorMsg("Para imagens, copie o texto do extrato e use a aba 'Colar Texto'.")
+        setAnalysis("Para imagens, copie o texto do extrato e use a aba 'Colar Texto'.")
         setStage("error")
         return
       }else if(ext==="pdf"){
-        // Try to read PDF as text first
         setMsg("Tentando extrair texto do PDF...")
         try {
           const txt = await toTxt(file)
-          if (txt && txt.trim().length > 50) {
+          // PDFs binários lidos como texto começam com "%PDF" — ilegíveis
+          const looks_binary = txt.startsWith('%PDF') || txt.startsWith('\x00')
+          if (!looks_binary && txt && txt.trim().length > 100) {
             await process([{text:EXTRACTION_PROMPT+"\n\n"+txt}],file.name)
           } else {
-            setErrorMsg("PDF sem texto legível. Abra o PDF, selecione todo o texto (Ctrl+A), copie e use a aba 'Colar Texto'.")
+            setAnalysis("PDF com texto não legível diretamente. Dica: use o arquivo OFX/QFX do banco (100% preciso), ou abra o PDF, selecione tudo (Ctrl+A) e cole na aba 'Colar Texto'.")
             setStage("error")
           }
         } catch {
-          setErrorMsg("Não foi possível ler o PDF. Use a aba 'Colar Texto' e cole o conteúdo do extrato.")
+          setAnalysis("Não foi possível ler o PDF. Use o arquivo OFX do banco ou cole o texto na aba 'Colar Texto'.")
           setStage("error")
         }
         return
+      }else if(["ofx","qfx"].includes(ext)){
+        // ─── Parser OFX/QFX nativo — sem IA, 100% preciso ────────────────────
+        setMsg("Lendo extrato OFX...")
+        const raw = await toTxt(file)
+
+        const ofxDate = s => {
+          const d = (s||"").replace(/\[.*\]/,"").trim()
+          if(d.length>=8) return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`
+          return new Date().toISOString().slice(0,10)
+        }
+        const ofxTag = (block, tag) => {
+          const m = block.match(new RegExp(`<${tag}>([^\\n<]*)`, "i"))
+          return m ? m[1].trim() : ""
+        }
+        const ofxCat = (memo, isE) => {
+          const n = (memo||"").toLowerCase()
+          if(isE) {
+            if(/recebimento.vendas|antecipa/i.test(n)) return "Receitas Extras"
+            if(/evento|ingresso|ticket/i.test(n)) return "Eventos"
+            if(/mensalidade|servico/i.test(n)) return "Serviços"
+            if(/venda|produto/i.test(n)) return "Vendas de Produtos"
+            if(/reembolso/i.test(n)) return "Reembolsos"
+            return "Receitas Extras"
+          }
+          if(/darf|das|simples|imposto|tributo|inss|fgts/i.test(n)) return "Impostos"
+          if(/aluguel|locac/i.test(n)) return "Aluguel"
+          if(/salario|folha|funcionario|colaborador/i.test(n)) return "Folha de Pagamento"
+          if(/energia|luz|agua|cemig|copel|sabesp/i.test(n)) return "Energia/Água"
+          if(/marketing|publicidade|meta ads|google ads/i.test(n)) return "Marketing"
+          if(/software|plataforma|assinatura/i.test(n)) return "Plataformas/Software"
+          if(/material|suprimento/i.test(n)) return "Materiais"
+          if(/equipamento/i.test(n)) return "Equipamentos"
+          if(/freelancer|autonomo/i.test(n)) return "Freelancers"
+          if(/manutencao|reparo/i.test(n)) return "Manutenção"
+          return "Despesas Operacionais"
+        }
+        const ofxPay = memo => {
+          if(/pix/i.test(memo)) return "PIX"
+          if(/boleto|pagamento/i.test(memo)) return "Boleto"
+          if(/debito.*fisico|cartao/i.test(memo)) return "Cartão Débito"
+          if(/ted|doc/i.test(memo)) return "TED/DOC"
+          return "PIX"
+        }
+
+        // Suporte a XML (<STMTTRN>...<\/STMTTRN>) e SGML (sem fechamento)
+        let trnBlocks = [...raw.matchAll(/<STMTTRN>([\s\S]*?)<\/STMTTRN>/gi)].map(m=>m[1])
+        if(!trnBlocks.length) {
+          // SGML: divide por <STMTTRN>
+          trnBlocks = raw.split(/<STMTTRN>/i).slice(1).map(b=>b.split(/<\/BANKTRANLIST>|<STMTTRN>/i)[0])
+        }
+
+        const ofxTxs = trnBlocks.map((block,i) => {
+          const trnType = ofxTag(block,"TRNTYPE").toUpperCase()
+          const dtPosted = ofxTag(block,"DTPOSTED")
+          const trnAmt   = ofxTag(block,"TRNAMT")
+          const memo     = ofxTag(block,"MEMO") || ofxTag(block,"NAME") || ""
+          const fitid    = ofxTag(block,"FITID") || `ofx_${i}`
+          const value    = parseFloat(trnAmt)
+          if(!value || !dtPosted) return null
+          const isE = value > 0 || trnType === "CREDIT"
+          const absVal = Math.abs(value)
+          const date = ofxDate(dtPosted)
+          return {
+            id: `ofx_${fitid}`,
+            name: memo,
+            date,
+            value: absVal,
+            type: isE ? "entrada" : "saida",
+            category: ofxCat(memo, isE),
+            payment: ofxPay(memo),
+            obs: "",
+            status: "pago",
+            recurrence: "none",
+            competencia: date.slice(0,7)
+          }
+        }).filter(Boolean).sort((a,b)=>a.date.localeCompare(b.date))
+
+        if(!ofxTxs.length) {
+          setAnalysis("Nenhuma transação encontrada no arquivo OFX. Verifique se o arquivo é um extrato bancário válido.")
+          setStage("preview"); setItems([]); return
+        }
+
+        setMsg(`${ofxTxs.length} lançamentos extraídos — gerando análise...`)
+        const tE2=ofxTxs.filter(t=>t.type==="entrada").reduce((a,t)=>a+t.value,0)
+        const tS2=ofxTxs.filter(t=>t.type==="saida").reduce((a,t)=>a+t.value,0)
+        let an2=`${ofxTxs.length} lançamentos importados do extrato OFX.`
+        try{ an2=await callGemini([{text:`CFO: analise em 2 bullets (pt-BR): ${ofxTxs.length} lançamentos. Entradas ${fmt(tE2)}, Saídas ${fmt(tS2)}, Resultado ${fmt(tE2-tS2)}. Período: ${ofxTxs[0].date} a ${ofxTxs[ofxTxs.length-1].date}.`}],apiKey) }catch{}
+        const dp2=new Set(ofxTxs.filter(t=>txs.some(e=>Math.abs(e.value-t.value)<0.01&&e.date===t.date&&e.type===t.type)).map(t=>t.id))
+        setDupes(dp2); setSel(new Set(ofxTxs.filter(t=>!dp2.has(t.id)).map(t=>t.id)))
+        setItems(ofxTxs); setAnalysis(an2); setStage("preview"); return
       }else if(["xlsx","xls"].includes(ext)){
         const buf = await file.arrayBuffer()
         const wb  = XLSX.read(new Uint8Array(buf), {type:"array", cellDates:true})
@@ -1469,11 +1560,11 @@ function ImportacaoIA({txs,setTxs,apiKey}) {
           </div>
           {tab==="arquivo"&&(
             <label className="block cursor-pointer">
-              <input type="file" accept=".pdf,.xlsx,.xls,.csv,.ofx,.txt,.jpg,.jpeg,.png" className="sr-only" onChange={e=>{const f=e.target.files?.[0];if(f)handleFile(f);e.target.value=""}}/>
+              <input type="file" accept=".pdf,.xlsx,.xls,.csv,.ofx,.qfx,.txt,.jpg,.jpeg,.png" className="sr-only" onChange={e=>{const f=e.target.files?.[0];if(f)handleFile(f);e.target.value=""}}/>
               <div className="border-2 border-dashed border-zinc-700 hover:border-violet-500 active:border-violet-400 rounded-2xl p-10 text-center transition-colors">
                 <div className="w-16 h-16 rounded-2xl bg-zinc-800 flex items-center justify-center mx-auto mb-4"><Upload size={28} className="text-zinc-500"/></div>
                 <p className="text-zinc-200 font-semibold mb-1">Toque para selecionar arquivo</p>
-                <p className="text-zinc-500 text-sm mb-5">PDF · XLSX · CSV · JPG · PNG</p>
+                <p className="text-zinc-500 text-sm mb-5"><span className="text-emerald-400 font-medium">OFX/QFX</span> (recomendado) · PDF · XLSX · CSV</p>
                 <span className="inline-flex items-center gap-2 bg-violet-500 text-white text-sm font-semibold rounded-xl px-6 py-3"><FileScan size={15}/>Selecionar Arquivo</span>
               </div>
             </label>
