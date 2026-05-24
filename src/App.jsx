@@ -181,8 +181,23 @@ const INP = "w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text
 
 // ─── FORM MODAL ───────────────────────────────────────────────────────────────
 function TxForm({data,setData,onSave,onClose,onDelete,title}) {
-  const [schedMonths, setSchedMonths] = useState(0)
+  const [schedSel, setSchedSel] = useState([])
   const isMensal = data.recurrence==="mensal" && !onDelete
+
+  // Gera os próximos 12 meses a partir do mês da data selecionada
+  const next12 = useMemo(() => {
+    const base = data.date ? new Date(data.date + 'T12:00:00') : new Date()
+    const months = []
+    for(let i=0; i<12; i++) {
+      const d = new Date(base.getFullYear(), base.getMonth() + i, 1)
+      months.push(d.toISOString().slice(0,7))
+    }
+    return months
+  }, [data.date])
+
+  const toggleMonth = m => setSchedSel(prev => prev.includes(m) ? prev.filter(x=>x!==m) : [...prev,m].sort())
+  const baseDay = data.date ? new Date(data.date+'T12:00:00').getDate() : null
+
   return (
     <Card className="border-zinc-700/60">
       <div className="flex items-center justify-between mb-4">
@@ -194,24 +209,48 @@ function TxForm({data,setData,onSave,onClose,onDelete,title}) {
         <div><label className="text-[11px] text-zinc-500 mb-1 block">Tipo *</label><select className={INP} value={data.type||"entrada"} onChange={e=>setData(p=>({...p,type:e.target.value,category:""}))}><option value="entrada">Entrada</option><option value="saida">Saída</option></select></div>
         <div><label className="text-[11px] text-zinc-500 mb-1 block">Categoria</label><select className={INP} value={data.category||""} onChange={e=>setData(p=>({...p,category:e.target.value}))}><option value="">Selecione</option>{(CATS[data.type||"entrada"]||[]).map(c=><option key={c}>{c}</option>)}</select></div>
         <div><label className="text-[11px] text-zinc-500 mb-1 block">Valor (R$) *</label><input type="number" className={`${INP} font-mono`} value={data.value||""} onChange={e=>setData(p=>({...p,value:e.target.value}))} placeholder="0.00"/></div>
-        <div><label className="text-[11px] text-zinc-500 mb-1 block">Data *</label><input type="date" className={INP} value={data.date||""} onChange={e=>setData(p=>({...p,date:e.target.value}))}/></div>
+        <div><label className="text-[11px] text-zinc-500 mb-1 block">Dia de vencimento *</label><input type="date" className={INP} value={data.date||""} onChange={e=>setData(p=>({...p,date:e.target.value}))}/></div>
         <div><label className="text-[11px] text-zinc-500 mb-1 block">Pagamento</label><select className={INP} value={data.payment||"PIX"} onChange={e=>setData(p=>({...p,payment:e.target.value}))}>{PAYMENTS.map(m=><option key={m}>{m}</option>)}</select></div>
         <div><label className="text-[11px] text-zinc-500 mb-1 block">Status</label><select className={INP} value={data.status||"pago"} onChange={e=>setData(p=>({...p,status:e.target.value}))}><option value="pago">Pago</option><option value="pendente">Pendente</option></select></div>
-        <div><label className="text-[11px] text-zinc-500 mb-1 block">Recorrência</label><select className={INP} value={data.recurrence||"none"} onChange={e=>{setData(p=>({...p,recurrence:e.target.value}));setSchedMonths(0)}}><option value="none">Avulso</option><option value="mensal">Mensal</option><option value="semanal">Semanal</option><option value="anual">Anual</option></select></div>
+        <div><label className="text-[11px] text-zinc-500 mb-1 block">Recorrência</label><select className={INP} value={data.recurrence||"none"} onChange={e=>{setData(p=>({...p,recurrence:e.target.value}));setSchedSel([])}}><option value="none">Avulso</option><option value="mensal">Mensal</option><option value="semanal">Semanal</option><option value="anual">Anual</option></select></div>
         <div className="sm:col-span-2 lg:col-span-3"><label className="text-[11px] text-zinc-500 mb-1 block">Observação</label><input className={INP} value={data.obs||""} onChange={e=>setData(p=>({...p,obs:e.target.value}))} placeholder="Opcional"/></div>
       </div>
+
       {isMensal&&(
-        <div className="mt-3 flex items-center gap-3 bg-indigo-500/5 border border-indigo-500/20 rounded-lg px-3 py-2.5">
-          <input type="checkbox" id="sched" checked={schedMonths>0} onChange={e=>setSchedMonths(e.target.checked?12:0)} className="accent-indigo-400 w-4 h-4 flex-shrink-0"/>
-          <label htmlFor="sched" className="text-sm text-zinc-300 flex-1 cursor-pointer">Programar para os próximos</label>
-          <select disabled={schedMonths===0} value={schedMonths||12} onChange={e=>setSchedMonths(Number(e.target.value))} className={`${INP} w-28 py-1 text-xs ${schedMonths===0?"opacity-40":""}`}>
-            {[3,6,12,24].map(n=><option key={n} value={n}>{n} meses</option>)}
-          </select>
+        <div className="mt-3 bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-3">
+          <div className="flex items-center justify-between mb-2.5">
+            <p className="text-sm font-semibold text-zinc-200">Selecionar meses</p>
+            <div className="flex gap-3">
+              <button type="button" onClick={()=>setSchedSel([...next12])} className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors font-medium">Todos</button>
+              <button type="button" onClick={()=>setSchedSel([])} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">Limpar</button>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+            {next12.map(m => {
+              const sel = schedSel.includes(m)
+              const [y,mo] = m.split('-')
+              const label = new Date(parseInt(y), parseInt(mo)-1, 1)
+                .toLocaleDateString('pt-BR',{month:'short',year:'2-digit'})
+              return (
+                <button key={m} type="button" onClick={()=>toggleMonth(m)}
+                  className={`text-xs px-2 py-2 rounded-lg border font-medium transition-all capitalize ${sel?'bg-indigo-500/20 border-indigo-500/50 text-indigo-300 shadow-sm':'border-zinc-700/60 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600'}`}>
+                  {label}
+                </button>
+              )
+            })}
+          </div>
+          {schedSel.length>0&&baseDay&&(
+            <p className="text-xs text-indigo-400/80 mt-2.5 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 flex-shrink-0"/>
+              Vencendo dia <strong>{baseDay}</strong> — {schedSel.length} lançamento{schedSel.length!==1?'s':''} {schedSel.length===1?'':'serão'} criado{schedSel.length!==1?'s':''}
+            </p>
+          )}
         </div>
       )}
+
       <div className="flex items-center gap-2 mt-4 flex-wrap">
-        <button onClick={()=>onSave(schedMonths)} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-lg px-5 py-2 transition-colors">
-          {schedMonths>0?`Criar ${schedMonths} lançamentos`:"Salvar"}
+        <button onClick={()=>onSave(schedSel)} className="bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-lg px-5 py-2 transition-colors">
+          {schedSel.length>0?`Criar ${schedSel.length} lançamento${schedSel.length!==1?'s':''}`:"Salvar"}
         </button>
         <button onClick={onClose} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm rounded-lg px-4 py-2 transition-colors">Cancelar</button>
         {onDelete&&<button onClick={onDelete} className="ml-auto flex items-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-sm rounded-lg px-4 py-2 transition-colors"><Trash2 size={13}/>Excluir</button>}
@@ -334,17 +373,19 @@ function Lancamentos({txs,setTxs}) {
     return true
   }).sort((a,b)=>b.date.localeCompare(a.date)),[txs,filt,q])
 
-  const save = (schedMonths=0) => {
+  const save = (schedSel=[]) => {
     if(!form.name||!form.value||!form.date) return
     const base = {...form, value:parseFloat(form.value), competencia:form.competencia||form.date.slice(0,7)}
-    if(schedMonths>0 && form.recurrence==="mensal") {
+    if(Array.isArray(schedSel) && schedSel.length>0 && form.recurrence==="mensal") {
       const now = new Date().toISOString().slice(0,7)
-      const newTxs = Array.from({length:schedMonths},(_,i)=>{
-        const d = new Date(base.date); d.setDate(1); d.setMonth(d.getMonth()+i)
-        d.setDate(Math.min(new Date(base.date).getDate(), new Date(d.getFullYear(),d.getMonth()+1,0).getDate()))
-        const dateStr = d.toISOString().slice(0,10)
-        const comp    = dateStr.slice(0,7)
-        return {...base, id:uid(), date:dateStr, competencia:comp, status:comp>now?"pendente":base.status}
+      const day = new Date(base.date+'T12:00:00').getDate()
+      const newTxs = schedSel.map(comp => {
+        const [y,mo] = comp.split('-').map(Number)
+        const maxDay = new Date(y, mo, 0).getDate()           // último dia do mês
+        const d = String(Math.min(day, maxDay)).padStart(2,'0')
+        const dateStr = `${comp}-${d}`
+        return {...base, id:uid(), date:dateStr, competencia:comp,
+          status: comp>now ? "pendente" : base.status}
       })
       setTxs(p=>[...p,...newTxs])
     } else {
@@ -1980,25 +2021,36 @@ function PersonalTxs({ txs, setTxs, cats }) {
     return true
   }).sort((a,b)=>b.date.localeCompare(a.date)), [txs,filt,q,month])
 
-  const [schedMonths, setSchedMonths] = useState(0)
+  const [schedSel, setSchedSel] = useState([])
+
+  // Gera próximos 12 meses a partir da data do form
+  const next12P = useMemo(() => {
+    const base = form.date ? new Date(form.date+'T12:00:00') : new Date()
+    return Array.from({length:12},(_,i)=>{
+      const d = new Date(base.getFullYear(), base.getMonth()+i, 1)
+      return d.toISOString().slice(0,7)
+    })
+  }, [form.date])
 
   const save = () => {
     if(!form.name||!form.value||!form.date) return
     const base = {...form, value:parseFloat(form.value), competencia:form.date.slice(0,7)}
-    if(schedMonths>0 && form.recurrence==="mensal") {
+    if(schedSel.length>0 && form.recurrence==="mensal") {
       const now = new Date().toISOString().slice(0,7)
-      const newTxs = Array.from({length:schedMonths},(_,i)=>{
-        const d = new Date(base.date); d.setDate(1); d.setMonth(d.getMonth()+i)
-        d.setDate(Math.min(new Date(base.date).getDate(), new Date(d.getFullYear(),d.getMonth()+1,0).getDate()))
-        const dateStr = d.toISOString().slice(0,10)
-        const comp    = dateStr.slice(0,7)
-        return {...base, id:uid(), date:dateStr, competencia:comp, status:comp>now?"pendente":base.status}
+      const day = new Date(base.date+'T12:00:00').getDate()
+      const newTxs = schedSel.map(comp => {
+        const [y,mo] = comp.split('-').map(Number)
+        const maxDay = new Date(y, mo, 0).getDate()
+        const d = String(Math.min(day,maxDay)).padStart(2,'0')
+        const dateStr = `${comp}-${d}`
+        return {...base, id:uid(), date:dateStr, competencia:comp,
+          status: comp>now ? "pendente" : base.status}
       })
       setTxs(p=>[...p,...newTxs])
     } else {
       setTxs(p=>[...p,{...base,id:uid()}])
     }
-    setForm(blank); setSchedMonths(0); setShow(false)
+    setForm(blank); setSchedSel([]); setShow(false)
   }
   const saveEdit = () => {
     if(!edit) return
@@ -2052,20 +2104,41 @@ function PersonalTxs({ txs, setTxs, cats }) {
             <div><label className="text-[11px] text-zinc-500 block mb-1">Valor (R$) *</label><input type="number" className={`${INP} font-mono`} value={activeData.value||""} onChange={e=>setActiveData(p=>({...p,value:e.target.value}))} placeholder="0,00"/></div>
             <div><label className="text-[11px] text-zinc-500 block mb-1">Data *</label><input type="date" className={INP} value={activeData.date||""} onChange={e=>setActiveData(p=>({...p,date:e.target.value}))}/></div>
             <div><label className="text-[11px] text-zinc-500 block mb-1">Status</label><select className={INP} value={activeData.status||"pago"} onChange={e=>setActiveData(p=>({...p,status:e.target.value}))}><option value="pago">Pago</option><option value="pendente">Pendente</option></select></div>
-            <div><label className="text-[11px] text-zinc-500 block mb-1">Recorrência</label><select className={INP} value={activeData.recurrence||"none"} onChange={e=>{setActiveData(p=>({...p,recurrence:e.target.value}));setSchedMonths(0)}}><option value="none">Avulso</option><option value="mensal">Mensal</option><option value="anual">Anual</option></select></div>
+            <div><label className="text-[11px] text-zinc-500 block mb-1">Recorrência</label><select className={INP} value={activeData.recurrence||"none"} onChange={e=>{setActiveData(p=>({...p,recurrence:e.target.value}));setSchedSel([])}}><option value="none">Avulso</option><option value="mensal">Mensal</option><option value="anual">Anual</option></select></div>
           </div>
           {!edit && activeData.recurrence==="mensal" && (
-            <div className="flex items-center gap-3 bg-indigo-500/5 border border-indigo-500/20 rounded-lg px-3 py-2.5">
-              <input type="checkbox" id="schedP" checked={schedMonths>0} onChange={e=>setSchedMonths(e.target.checked?12:0)} className="accent-indigo-400 w-4 h-4 flex-shrink-0"/>
-              <label htmlFor="schedP" className="text-sm text-zinc-300 flex-1 cursor-pointer">Programar para os próximos</label>
-              <select disabled={schedMonths===0} value={schedMonths||12} onChange={e=>setSchedMonths(Number(e.target.value))} className={`${INP} w-28 py-1 text-xs ${schedMonths===0?"opacity-40":""}`}>
-                {[3,6,12,24].map(n=><option key={n} value={n}>{n} meses</option>)}
-              </select>
+            <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-3">
+              <div className="flex items-center justify-between mb-2.5">
+                <p className="text-sm font-semibold text-zinc-200">Selecionar meses</p>
+                <div className="flex gap-3">
+                  <button type="button" onClick={()=>setSchedSel([...next12P])} className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors font-medium">Todos</button>
+                  <button type="button" onClick={()=>setSchedSel([])} className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">Limpar</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
+                {next12P.map(m=>{
+                  const sel=schedSel.includes(m)
+                  const [y,mo]=m.split('-')
+                  const label=new Date(parseInt(y),parseInt(mo)-1,1).toLocaleDateString('pt-BR',{month:'short',year:'2-digit'})
+                  return(
+                    <button key={m} type="button" onClick={()=>setSchedSel(prev=>prev.includes(m)?prev.filter(x=>x!==m):[...prev,m].sort())}
+                      className={`text-xs px-2 py-2 rounded-lg border font-medium transition-all capitalize ${sel?'bg-indigo-500/20 border-indigo-500/50 text-indigo-300':'border-zinc-700/60 text-zinc-500 hover:text-zinc-300 hover:border-zinc-600'}`}>
+                      {label}
+                    </button>
+                  )
+                })}
+              </div>
+              {schedSel.length>0&&activeData.date&&(
+                <p className="text-xs text-indigo-400/80 mt-2.5 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 flex-shrink-0"/>
+                  Dia {new Date(activeData.date+'T12:00:00').getDate()} — {schedSel.length} lançamento{schedSel.length!==1?'s':''}
+                </p>
+              )}
             </div>
           )}
           <div className="flex items-center gap-2 pt-1">
             <button onClick={edit?saveEdit:save} className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-zinc-900 font-semibold text-sm rounded-xl py-2.5 transition-colors">
-              {!edit&&schedMonths>0?`Criar ${schedMonths} lançamentos`:"Salvar"}
+              {!edit&&schedSel.length>0?`Criar ${schedSel.length} lançamento${schedSel.length!==1?'s':''}`:"Salvar"}
             </button>
             {edit&&<button onClick={()=>del(edit.id)} className="flex items-center gap-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-sm rounded-xl px-4 py-2.5 transition-colors"><Trash2 size={13}/>Excluir</button>}
           </div>
